@@ -1,0 +1,26 @@
+{
+	"name": "instagram-api-safe-inject",
+	"version": "0.1.0",
+	"description": "Fail-closed MAIN-world Instagram request catalog and native request observer.",
+	"type": "module",
+	"types": "./types.d.ts",
+	"exports": {
+		".": { "types": "./types.d.ts" },
+		"./types": { "types": "./types.d.ts" },
+		"./setup.js": "./setup.js"
+	},
+	"files": ["setup.js", "types.d.ts", "README.md"],
+	"scripts": {
+		"build": "pnpm verify",
+		"test": "node --test test/*.test.mjs",
+		"type-check": "tsc --noEmit --strict --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2023 types.d.ts",
+		"verify": "node --check setup.js && node --test test/*.test.mjs"
+	},
+	"dependencies": {
+		"instagram-api-safe-contracts": "workspace:*"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.3"
+	},
+	"license": "MIT"
+}

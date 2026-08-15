@@ -1,0 +1,43 @@
+services:
+  init-profile:
+    image: alpine:3.23
+    command: ["sh", "-c", "rm -f /profile/Singleton* /profile/DevToolsActivePort && chown -R 1000:0 /profile && chmod -R g+rwX /profile"]
+    volumes:
+      - instagram_user_data:/profile
+    restart: "no"
+
+  browser:
+    image: kasmweb/chrome:1.18.0
+    depends_on:
+      init-profile:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:6901:6901"
+      - "127.0.0.1:6900:3000"
+    environment:
+      VNC_PW: "${VNC_PW:?VNC_PWを設定してください}"
+      APP_ARGS: "--start-maximized --user-data-dir=/home/kasm-user/chrome-profile --password-store=basic --remote-debugging-port=9222"
+      INSTAGRAM_RELAY_API_TOKEN: "${INSTAGRAM_RELAY_API_TOKEN:?INSTAGRAM_RELAY_API_TOKENを設定してください}"
+    volumes:
+      - instagram_user_data:/home/kasm-user/chrome-profile
+    shm_size: "2gb"
+    restart: unless-stopped
+
+  relay:
+    build:
+      context: ..
+      target: relay-slim
+    depends_on:
+      browser:
+        condition: service_started
+    network_mode: "service:browser"
+    environment:
+      INSTAGRAM_RELAY_API_TOKEN: "${INSTAGRAM_RELAY_API_TOKEN:?INSTAGRAM_RELAY_API_TOKENを設定してください}"
+      INSTAGRAM_RELAY_SETTINGS: /app/settings.json
+    volumes:
+      - ./settings.json:/app/settings.json:ro
+    restart: unless-stopped
+
+volumes:
+  instagram_user_data:
+

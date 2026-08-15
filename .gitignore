@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.output/
+.wxt/
+coverage/
+user_data/
+.env
+settings.json
+*.log
+work/
+outputs/

@@ -1,0 +1,19 @@
+{
+  "port": 3000,
+  "logLevel": "info",
+  "dashboard": true,
+  "sessionCheckIntervalSeconds": 30,
+  "recoveryRetrySeconds": 5,
+  "profiles": [
+    {
+      "name": "account1",
+      "home": "https://www.instagram.com/",
+      "browser": {
+        "type": "launch",
+        "browserType": "chromium",
+        "userDataDir": "./user_data/account1",
+        "headless": false
+      }
+    }
+  ]
+}
