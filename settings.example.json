@@ -1,19 +1,27 @@
 {
-  "port": 3000,
-  "logLevel": "info",
-  "dashboard": true,
-  "sessionCheckIntervalSeconds": 30,
-  "recoveryRetrySeconds": 5,
-  "profiles": [
-    {
-      "name": "account1",
-      "home": "https://www.instagram.com/",
-      "browser": {
-        "type": "launch",
-        "browserType": "chromium",
-        "userDataDir": "./user_data/account1",
-        "headless": false
-      }
-    }
-  ]
+	"direct": { "enabled": false, "stateDir": "./dm_data", "operationTimeoutMs": 60000 },
+	"port": 3000,
+	"logLevel": "info",
+	"dashboard": true,
+	"sessionCheckIntervalSeconds": 30,
+	"recoveryRetrySeconds": 5,
+	"stories": {
+		"enabled": false,
+		"allowedMediaDirectories": [],
+		"stateDir": "./story_data",
+		"ffprobePath": "ffprobe",
+		"operationTimeoutMs": 300000
+	},
+	"profiles": [
+		{
+			"name": "account1",
+			"home": "https://www.instagram.com/",
+			"browser": {
+				"type": "launch",
+				"browserType": "chromium",
+				"userDataDir": "./user_data/account1",
+				"headless": false
+			}
+		}
+	]
 }

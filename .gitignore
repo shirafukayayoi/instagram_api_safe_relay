@@ -9,3 +9,6 @@ settings.json
 *.log
 work/
 outputs/
+story_data/
+dm_data/
+.playwright-cli/

@@ -1,4 +1,5 @@
 import { z } from "zod";
+export * from "./stories.js";
 
 /** リレーが提供する、公開情報のみを扱う操作名。 */
 export const operationNames = [
@@ -191,9 +192,7 @@ export type OperationOutcome<TName extends OperationName> =
  * プライベート判定を DTO 変換の前に完了させるための判定型。
  * vendor の生レスポンスをここへ持ち込まず、内部実装だけが T を保持する。
  */
-export type PublicAccess<T> =
-	| { visibility: "public"; value: T }
-	| { visibility: "private" };
+export type PublicAccess<T> = { visibility: "public"; value: T } | { visibility: "private" };
 
 export type VerifiedPublic<T> = Extract<PublicAccess<T>, { visibility: "public" }>;
 
@@ -250,3 +249,4 @@ export const parseOperationInput = <TName extends OperationName>(
 	operation: TName,
 	input: unknown,
 ): OperationInput<TName> => operationInputSchemas[operation].parse(input) as OperationInput<TName>;
+export * from "./direct.js";

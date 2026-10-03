@@ -5,6 +5,10 @@ import { createApp } from "./app.js";
 import { ProfileManager } from "./profile-manager.js";
 import type { RelayProfile } from "./types.js";
 import { loadSettings } from "./utils/settings.js";
+import { StoryStore } from "./stories/store.js";
+import { StoryService } from "./stories/service.js";
+import { DmStore } from "./direct/store.js";
+import { DmService } from "./direct/service.js";
 
 const settingsPath = process.env.INSTAGRAM_RELAY_SETTINGS ?? "./../../settings.json";
 const token = process.env.INSTAGRAM_RELAY_API_TOKEN;
@@ -30,7 +34,46 @@ const managers = settings.profiles.map((profileSettings) => {
 	});
 });
 
-const app = createApp({ profiles, token, requestTimeoutMs: settings.requestTimeoutMs, dashboard: settings.dashboard });
-serve({ fetch: app.fetch, hostname: "127.0.0.1", port: settings.port });
-logger.info({ url: `http://127.0.0.1:${settings.port}`, profiles: profiles.map(({ name }) => name) }, "Relayを起動しました");
+let stories: StoryService | undefined;
+if (settings.stories.enabled) {
+	const store = new StoryStore(settings.stories.stateDir);
+	await store.open();
+	stories = new StoryService({
+		settings: settings.stories,
+		profiles,
+		store,
+		onStorageError: (id) =>
+			logger.error({ jobId: id, errorCode: "STORAGE_UNAVAILABLE" }, "ストーリー台帳の保存に失敗しました"),
+	});
+}
+let direct: DmService | undefined;
+if (settings.direct.enabled) {
+	const store = new DmStore(settings.direct.stateDir);
+	await store.open();
+	direct = new DmService({ settings: settings.direct, profiles, store });
+}
+const app = createApp({
+	profiles,
+	token,
+	requestTimeoutMs: settings.requestTimeoutMs,
+	dashboard: settings.dashboard,
+	...(stories ? { stories } : {}),
+	...(direct ? { direct } : {}),
+});
+const httpServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: settings.port });
+let shuttingDown = false;
+const shutdown = async () => {
+	if (shuttingDown) return;
+	shuttingDown = true;
+	await stories?.close();
+	await direct?.close();
+	await Promise.all(managers.map((manager) => manager.stop()));
+	httpServer.close(() => process.exit(0));
+};
+process.once("SIGINT", () => void shutdown());
+process.once("SIGTERM", () => void shutdown());
+logger.info(
+	{ url: `http://127.0.0.1:${settings.port}`, profiles: profiles.map(({ name }) => name) },
+	"Relayを起動しました",
+);
 await Promise.all(managers.map((manager) => manager.start()));

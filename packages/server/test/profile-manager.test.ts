@@ -57,15 +57,16 @@ const createManager = (
 	context: FakeContext,
 	state = "ready",
 	openContext: () => Promise<FakeContext> = async () => context,
-) => new ProfileManager({
-	settings: profileSettings,
-	profile,
-	logger: pino({ level: "silent" }),
-	sessionCheckIntervalMs: 60_000,
-	recoveryRetryMs: 60_000,
-	openContext: openContext as never,
-	createClient: ((page: FakePage) => clientFor(page, state)) as never,
-});
+) =>
+	new ProfileManager({
+		settings: profileSettings,
+		profile,
+		logger: pino({ level: "silent" }),
+		sessionCheckIntervalMs: 60_000,
+		recoveryRetryMs: 60_000,
+		openContext: openContext as never,
+		createClient: ((page: FakePage) => clientFor(page, state)) as never,
+	});
 
 describe("ProfileManager", () => {
 	for (const state of ["ready", "login_required", "two_factor_required", "challenge_required"] as const) {
@@ -85,7 +86,9 @@ describe("ProfileManager", () => {
 		await manager.start();
 		const firstPage = context.pages[0];
 		if (!firstPage) throw new Error("初期pageが作成されませんでした");
-		firstPage.reloadImpl = async () => { throw new Error("reload failed"); };
+		firstPage.reloadImpl = async () => {
+			throw new Error("reload failed");
+		};
 
 		await manager.recover("test");
 
@@ -98,7 +101,9 @@ describe("ProfileManager", () => {
 	it("contextを開けない場合はbrowser_disconnectedになり、stopできる", async () => {
 		const profile: RelayProfile = { name: "test", state: "starting" };
 		const context = new FakeContext();
-		const manager = createManager(profile, context, "ready", async () => { throw new Error("launch failed"); });
+		const manager = createManager(profile, context, "ready", async () => {
+			throw new Error("launch failed");
+		});
 
 		await manager.start();
 
@@ -115,7 +120,10 @@ describe("ProfileManager", () => {
 		let release: (() => void) | undefined;
 		const firstPage = context.pages[0];
 		if (!firstPage) throw new Error("初期pageが作成されませんでした");
-		firstPage.reloadImpl = () => new Promise<void>((resolve) => { release = resolve; });
+		firstPage.reloadImpl = () =>
+			new Promise<void>((resolve) => {
+				release = resolve;
+			});
 
 		const first = manager.recover("first");
 		const second = manager.recover("second");
@@ -124,6 +132,37 @@ describe("ProfileManager", () => {
 		release?.();
 		await Promise.all([first, second]);
 		expect(firstPage.reloadCalls).toBe(1);
+		await manager.stop();
+	});
+
+	it("投稿などの排他処理中は再読込と復旧を保留する", async () => {
+		const profile: RelayProfile = { name: "test", state: "starting" };
+		const context = new FakeContext();
+		const manager = createManager(profile, context);
+		await manager.start();
+		const page = context.pages[0];
+		if (!page) throw new Error("初期pageが作成されませんでした");
+		let release: () => void = () => undefined;
+		let entered: () => void = () => undefined;
+		const started = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const task = manager.runExclusive(async () => {
+			entered();
+			await new Promise<void>((resolve) => {
+				release = resolve;
+			});
+		});
+		await started;
+		await manager.recover("scheduled_reload");
+		await manager.checkSession();
+		expect(page.reloadCalls).toBe(0);
+		page.emit("crash");
+		expect(page.reloadCalls).toBe(0);
+		release();
+		await task;
+		await manager.recover("after_job");
+		expect(page.reloadCalls).toBe(1);
 		await manager.stop();
 	});
 });

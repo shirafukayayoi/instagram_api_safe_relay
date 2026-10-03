@@ -1,0 +1,44 @@
+import { z } from "zod";
+
+/** 書き込み契約は公開情報の4操作カタログとは分離する。 */
+export const createStoryInputSchema = z.strictObject({
+	filePath: z.string().min(1).max(4096),
+	audience: z.enum(["all", "close_friends"]).default("all"),
+	caption: z.string().max(2200).default(""),
+});
+export const storyJobStates = ["queued", "uploading", "publishing", "published", "failed", "unknown"] as const;
+export const storyErrorCodes = [
+	"STORIES_DISABLED",
+	"AUDIENCE_UNSUPPORTED",
+	"INVALID_INPUT",
+	"UNKNOWN_PROFILE",
+	"SESSION_NOT_READY",
+	"MEDIA_NOT_ALLOWED",
+	"MEDIA_INVALID",
+	"MEDIA_TOO_LARGE",
+	"MEDIA_PROBE_UNAVAILABLE",
+	"IDEMPOTENCY_CONFLICT",
+	"CATALOG_STALE",
+	"ACCOUNT_CHANGED",
+	"UPLOAD_FAILED",
+	"PUBLICATION_UNKNOWN",
+	"INTERRUPTED",
+	"STORAGE_UNAVAILABLE",
+	"NOT_FOUND",
+] as const;
+export const storyAccountSchema = z.strictObject({ id: z.string().regex(/^\d+$/), username: z.string().min(1) });
+export const storyJobSchema = z.strictObject({
+	id: z.string().uuid(),
+	profile: z.string().min(1),
+	audience: z.enum(["all", "close_friends"]).default("all"),
+	state: z.enum(storyJobStates),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+	account: storyAccountSchema.nullable(),
+	mediaId: z.string().nullable(),
+	errorCode: z.enum(storyErrorCodes).nullable(),
+});
+export type CreateStoryInput = z.infer<typeof createStoryInputSchema>;
+export type StoryAccount = z.infer<typeof storyAccountSchema>;
+export type StoryJob = z.infer<typeof storyJobSchema>;
+export type StoryErrorCode = (typeof storyErrorCodes)[number];

@@ -16,6 +16,7 @@ export type RelayProfile = {
 	client?: InstagramApiProfileClient;
 	state: ProfileState;
 	lastError?: string;
+	runExclusive?: <T>(task: (client: InstagramApiProfileClient) => Promise<T>) => Promise<T>;
 };
 
 export type SafeTrace = {

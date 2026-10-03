@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import type { RelayProfile } from "./types.js";
 import { openBrowserContext } from "./utils/browser.js";
 import type { Settings } from "./utils/settings.js";
+import { SerialQueue } from "./utils/queue.js";
 
 type ProfileSettings = Settings["profiles"][number];
 
@@ -42,6 +43,9 @@ export class ProfileManager {
 	#sessionTimer?: ReturnType<typeof setInterval>;
 	#reloadTimer?: ReturnType<typeof setInterval>;
 	#stopped = false;
+	readonly #queue = new SerialQueue();
+	#busy = false;
+	#pendingRecovery: string | undefined;
 
 	constructor(options: ProfileManagerOptions) {
 		this.#settings = options.settings;
@@ -51,6 +55,25 @@ export class ProfileManager {
 		this.#recoveryRetryMs = options.recoveryRetryMs;
 		this.#openContext = options.openContext ?? openBrowserContext;
 		this.#createClient = options.createClient ?? createInstagramBrowser;
+		this.#profile.runExclusive = (task) => this.runExclusive(task);
+	}
+
+	runExclusive<T>(task: (client: InstagramApiProfileClient) => Promise<T>): Promise<T> {
+		return this.#queue.run(async () => {
+			const client = this.#profile.client;
+			if (this.#stopped || this.#profile.state !== "ready" || !client) {
+				throw Object.assign(new Error("ブラウザセッションの準備ができていません"), { code: "SESSION_NOT_READY" });
+			}
+			this.#busy = true;
+			try {
+				return await task(client);
+			} finally {
+				this.#busy = false;
+				const pending = this.#pendingRecovery;
+				this.#pendingRecovery = undefined;
+				if (pending) void this.recover(pending);
+			}
+		});
 	}
 
 	async start(): Promise<void> {
@@ -79,7 +102,7 @@ export class ProfileManager {
 	}
 
 	async checkSession(): Promise<void> {
-		if (this.#stopped || this.#recovery) return;
+		if (this.#stopped || this.#recovery || this.#busy) return;
 		const client = this.#profile.client;
 		if (!client || !this.#page || this.#page.isClosed()) {
 			await this.recover("session_check");
@@ -98,10 +121,16 @@ export class ProfileManager {
 
 	async recover(reason: string): Promise<void> {
 		if (this.#stopped) return;
+		if (this.#busy) {
+			this.#pendingRecovery = reason;
+			return;
+		}
 		if (this.#recovery) return await this.#recovery;
-		this.#recovery = this.#recover(reason).finally(() => {
-			this.#recovery = undefined;
-		});
+		this.#recovery = this.#queue
+			.run(() => this.#recover(reason))
+			.finally(() => {
+				this.#recovery = undefined;
+			});
 		return await this.#recovery;
 	}
 

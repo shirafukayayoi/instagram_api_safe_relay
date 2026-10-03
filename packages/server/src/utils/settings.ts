@@ -31,27 +31,77 @@ const cdpBrowserSchema = z.strictObject({
 
 const profileSchema = z.strictObject({
 	name: z.string().trim().min(1).max(64),
-	home: z.string().url().refine((value) => new URL(value).hostname === "www.instagram.com").default("https://www.instagram.com/"),
+	home: z
+		.string()
+		.url()
+		.refine((value) => new URL(value).hostname === "www.instagram.com")
+		.default("https://www.instagram.com/"),
 	pageReloadIntervalMinutes: z.number().int().min(5).max(1440).optional(),
 	browser: z.discriminatedUnion("type", [launchBrowserSchema, cdpBrowserSchema]),
 });
 
-export const settingsSchema = z.strictObject({
-	port: z.number().int().min(1).max(65535).default(3000),
-	logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
-	logPrettyPrint: z.boolean().default(true),
-	dashboard: z.boolean().default(true),
-	requestTimeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
-	sessionCheckIntervalSeconds: z.number().int().min(10).max(300).default(30),
-	recoveryRetrySeconds: z.number().int().min(1).max(300).default(5),
-	profiles: z.array(profileSchema).min(1).superRefine((profiles, context) => {
-		const names = new Set<string>();
-		for (const [index, profile] of profiles.entries()) {
-			if (names.has(profile.name)) context.addIssue({ code: "custom", path: [index, "name"], message: "profile名が重複しています" });
-			names.add(profile.name);
+export const settingsSchema = z
+	.strictObject({
+		port: z.number().int().min(1).max(65535).default(3000),
+		logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+		logPrettyPrint: z.boolean().default(true),
+		dashboard: z.boolean().default(true),
+		requestTimeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
+		direct: z
+			.strictObject({
+				enabled: z.boolean().default(false),
+				stateDir: z.string().min(1).default("./dm_data"),
+				operationTimeoutMs: z.number().int().min(30000).max(300000).default(60000),
+			})
+			.default({ enabled: false, stateDir: "./dm_data", operationTimeoutMs: 60000 }),
+		stories: z
+			.strictObject({
+				enabled: z.boolean().default(false),
+				allowedMediaDirectories: z.array(z.string().min(1)).default([]),
+				stateDir: z.string().min(1).default("./story_data"),
+				ffprobePath: z.string().min(1).default("ffprobe"),
+				operationTimeoutMs: z.number().int().min(30_000).max(900_000).default(300_000),
+			})
+			.default({
+				enabled: false,
+				allowedMediaDirectories: [],
+				stateDir: "./story_data",
+				ffprobePath: "ffprobe",
+				operationTimeoutMs: 300_000,
+			}),
+		sessionCheckIntervalSeconds: z.number().int().min(10).max(300).default(30),
+		recoveryRetrySeconds: z.number().int().min(1).max(300).default(5),
+		profiles: z
+			.array(profileSchema)
+			.min(1)
+			.superRefine((profiles, context) => {
+				const names = new Set<string>();
+				for (const [index, profile] of profiles.entries()) {
+					if (names.has(profile.name))
+						context.addIssue({ code: "custom", path: [index, "name"], message: "profile名が重複しています" });
+					names.add(profile.name);
+				}
+			}),
+	})
+	.superRefine((settings, context) => {
+		if (!settings.stories.enabled) return;
+		if (settings.stories.allowedMediaDirectories.length === 0) {
+			context.addIssue({
+				code: "custom",
+				path: ["stories", "allowedMediaDirectories"],
+				message: "投稿用の許可ディレクトリが必要です",
+			});
 		}
-	}),
-});
+		for (const [index, profile] of settings.profiles.entries()) {
+			if (profile.browser.browserType !== "chromium") {
+				context.addIssue({
+					code: "custom",
+					path: ["profiles", index, "browser", "browserType"],
+					message: "ストーリーズ投稿にはChromiumが必要です",
+				});
+			}
+		}
+	});
 
 export type Settings = z.infer<typeof settingsSchema>;
 export const loadSettings = (input: unknown) => settingsSchema.parse(input);
