@@ -1,4 +1,5 @@
 {
+	"storyMentions": { "enabled": false, "stateDir": "./story_mention_data", "operationTimeoutMs": 300000 },
 	"direct": { "enabled": false, "stateDir": "./dm_data", "operationTimeoutMs": 60000 },
 	"port": 3000,
 	"logLevel": "info",

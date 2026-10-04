@@ -47,6 +47,11 @@ export const settingsSchema = z
 		logPrettyPrint: z.boolean().default(true),
 		dashboard: z.boolean().default(true),
 		requestTimeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
+		storyMentions: z.strictObject({
+			enabled: z.boolean().default(false),
+			stateDir: z.string().min(1).default("./story_mention_data"),
+			operationTimeoutMs: z.number().int().min(30000).max(900000).default(300000),
+		}).default({ enabled: false, stateDir: "./story_mention_data", operationTimeoutMs: 300000 }),
 		direct: z
 			.strictObject({
 				enabled: z.boolean().default(false),

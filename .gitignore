@@ -10,5 +10,6 @@ settings.json
 work/
 outputs/
 story_data/
+story_mention_data/
 dm_data/
 .playwright-cli/

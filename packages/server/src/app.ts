@@ -12,6 +12,8 @@ import { StoryError, storyStatus } from "./stories/errors.js";
 import type { StoryService } from "./stories/service.js";
 import type { DmService } from "./direct/service.js";
 import { DmError, dmStatus } from "./direct/errors.js";
+import type { MentionService } from "./story-mentions/service.js";
+import { mountMentionRoutes } from "./story-mentions/routes.js";
 
 type CreateAppOptions = {
 	profiles: RelayProfile[];
@@ -20,6 +22,7 @@ type CreateAppOptions = {
 	dashboard?: boolean;
 	stories?: StoryService;
 	direct?: DmService;
+	storyMentions?: MentionService;
 };
 
 const statusByCode: Record<RelayErrorCode, 400 | 401 | 403 | 404 | 409 | 429 | 502 | 503> = {
@@ -62,6 +65,7 @@ export const createApp = ({
 	dashboard = false,
 	stories,
 	direct,
+	storyMentions,
 }: CreateAppOptions) => {
 	const app = new Hono();
 	const queues = new Map(profiles.map((profile) => [profile.name, new SerialQueue()]));
@@ -150,6 +154,7 @@ export const createApp = ({
 		return profiles.length === 1 ? profiles[0] : undefined;
 	};
 
+	mountMentionRoutes(app, storyMentions, name => resolveProfile(name)?.name);
 	const run = async <TName extends OperationName>(c: Context, operation: TName, rawInput: unknown) => {
 		let input: OperationInputMap[TName];
 		try {

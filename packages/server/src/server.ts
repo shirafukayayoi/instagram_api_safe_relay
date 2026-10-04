@@ -9,6 +9,8 @@ import { StoryStore } from "./stories/store.js";
 import { StoryService } from "./stories/service.js";
 import { DmStore } from "./direct/store.js";
 import { DmService } from "./direct/service.js";
+import { MentionStore } from "./story-mentions/store.js";
+import { MentionService } from "./story-mentions/service.js";
 
 const settingsPath = process.env.INSTAGRAM_RELAY_SETTINGS ?? "./../../settings.json";
 const token = process.env.INSTAGRAM_RELAY_API_TOKEN;
@@ -52,6 +54,12 @@ if (settings.direct.enabled) {
 	await store.open();
 	direct = new DmService({ settings: settings.direct, profiles, store });
 }
+let storyMentions: MentionService | undefined;
+if (settings.storyMentions.enabled) {
+	const store = new MentionStore(settings.storyMentions.stateDir);
+	await store.open();
+	storyMentions = new MentionService({ settings: settings.storyMentions, profiles, store });
+}
 const app = createApp({
 	profiles,
 	token,
@@ -59,6 +67,7 @@ const app = createApp({
 	dashboard: settings.dashboard,
 	...(stories ? { stories } : {}),
 	...(direct ? { direct } : {}),
+	...(storyMentions ? { storyMentions } : {}),
 });
 const httpServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: settings.port });
 let shuttingDown = false;
@@ -67,6 +76,7 @@ const shutdown = async () => {
 	shuttingDown = true;
 	await stories?.close();
 	await direct?.close();
+	await storyMentions?.close();
 	await Promise.all(managers.map((manager) => manager.stop()));
 	httpServer.close(() => process.exit(0));
 };

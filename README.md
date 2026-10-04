@@ -82,7 +82,34 @@ Invoke-RestMethod -Headers $headers "http://127.0.0.1:3000/v1/dm/jobs/$($job.dat
 
 DM一覧・メッセージ取得と通常の一対一会話へのテキスト送信は実アカウントで確認済みです。グループ会話の実送信は未検証です。通常テストにはモックを使用します。送信試験は宛先と本文を指定した明示的な依頼で行います。
 
-### ストーリーズ投稿
+### メンション受付・ネイティブ再投稿
+
+`storyMentions: { "enabled": true, "stateDir": "./story_mention_data", "operationTimeoutMs": 300000 }`で受付を有効化します。DMやローカル素材投稿とは別サービスです。自動更新・自動公開・Dashboard操作は追加していません。
+
+- `POST /v1/story-mentions/refresh`: 全送信者の通常DM・リクエスト一覧と会話をページングし、自分宛てのメンションだけを更新します。空本文または`{}`で指定し、`202`と更新ジョブを受け取ります。
+- `GET /v1/story-mention-refresh-jobs/:id`: 更新の進捗・結果を取得します。全ページの取得が完了した場合だけ一覧を更新します。
+- `GET /v1/story-mentions?limit=20&cursor=...`: 自分のアカウントの依頼一覧を取得します。`available / expired / removed / unavailable / unknown`と理由、送信者、元メディアIDを返します。署名付き素材URLやDM本文は返しません。
+- `POST /v1/story-mentions/:id/repost`: 必須の`Idempotency-Key`で再投稿ジョブを作成します。公開範囲は通常公開のみで、要求本文は空または`{}`です。
+- `GET /v1/story-repost-jobs/:id`: `queued / validating / publishing / published / failed / unknown`を取得します。
+
+**現在のネイティブ再投稿方式は未検証です。** 元ストーリーが再投稿可能でも、公開ジョブは`failed / NATIVE_REPOST_UNAVAILABLE`として公開前に停止します。`available`は元投稿側の許可であり、Relayで公開できる保証ではありません。素材のダウンロード・再アップロードに置き換えません。
+
+現在のWebでは旧メッセージリクエストAPIが`404`になるため、リクエスト0件を確認できた場合だけ全件更新を完了します。リクエストが存在する、または件数を確認できない場合は`PENDING_INBOX_UNAVAILABLE`で更新を停止し、途中取得を全件成功として扱いません。暗号化などで読み取れない会話がある場合も更新ジョブは失敗し、既存一覧を維持します。
+
+同じキーの同じ要求は既存ジョブ、異なる要求は`409`です。公開開始後はアカウント・元メディア単位で新しいキーによる重複も防ぎます。再起動時の`publishing`は`unknown`、公開前の途中ジョブは`failed`にし、自動再送しません。`unknown`はInstagramで公開済みか確認し、台帳を削除して再送しないでください。台帳には受付メタデータとジョブだけを保存し、`story_mention_data/`をコミットしません。
+
+```powershell
+$headers = @{ Authorization = "Bearer $env:INSTAGRAM_RELAY_API_TOKEN"; "x-profile-name" = "account1" }
+$refresh = Invoke-RestMethod -Method Post -Headers $headers http://127.0.0.1:3000/v1/story-mentions/refresh
+Invoke-RestMethod -Headers $headers "http://127.0.0.1:3000/v1/story-mention-refresh-jobs/$($refresh.data.id)"
+$requests = Invoke-RestMethod -Headers $headers http://127.0.0.1:3000/v1/story-mentions
+# 元投稿と送信者を確認した依頼IDを指定
+$headers["Idempotency-Key"] = "mention-repost-001"
+$job = Invoke-RestMethod -Method Post -Headers $headers "http://127.0.0.1:3000/v1/story-mentions/確認した依頼ID/repost"
+Invoke-RestMethod -Headers $headers "http://127.0.0.1:3000/v1/story-repost-jobs/$($job.data.id)"
+```
+
+### ローカル素材のストーリーズ投稿
 
 既定では無効です。Chromiumと`ffprobe`が必要です。`settings.json`へ設定し、relayを再起動してください。
 
