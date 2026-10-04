@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { dmPageInputSchema, dmSendInputSchema, type DmJob } from "instagram-api-safe-contracts";
+import { type DmJob, dmPageInputSchema, dmSendInputSchema } from "instagram-api-safe-contracts";
 import type { RelayProfile } from "../types.js";
 import { SerialQueue } from "../utils/queue.js";
 import type { Settings } from "../utils/settings.js";

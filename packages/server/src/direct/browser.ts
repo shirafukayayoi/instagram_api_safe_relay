@@ -1,12 +1,13 @@
 import {
+	type DmPageInput,
 	dmInboxSchema,
 	dmMessagesSchema,
-	storyAccountSchema,
-	type DmPageInput,
 	type StoryAccount,
+	storyAccountSchema,
 } from "instagram-api-safe-contracts";
 import type { Page } from "playwright";
 import { executeDmInBrowser } from "./browser-execute.js";
+import { sendDmThroughUi } from "./browser-send.js";
 import { DmError } from "./errors.js";
 
 export const createDmTransport = async (source: Page, signal: AbortSignal) => {
@@ -18,8 +19,16 @@ export const createDmTransport = async (source: Page, signal: AbortSignal) => {
 		void close();
 	};
 	signal.addEventListener("abort", abort, { once: true });
-	let allowSend = false;
 	let sends = 0;
+	let loginRedirect = false;
+	page.on("response", (response) => {
+		const url = new URL(response.url());
+		if (url.origin === "https://www.instagram.com" && /^\/accounts\/login(?:\/|$)/.test(url.pathname))
+			loginRedirect = true;
+	});
+	const assertSession = () => {
+		if (loginRedirect) throw new DmError("SESSION_NOT_READY", "DM通信で再ログインが要求されました");
+	};
 	try {
 		if (signal.aborted) throw new Error("ABORTED");
 		await page.goto("https://www.instagram.com/", { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -36,19 +45,7 @@ export const createDmTransport = async (source: Page, signal: AbortSignal) => {
 		);
 		await page.route("**/*", async (route) => {
 			const request = route.request();
-			const url = new URL(request.url());
 			if (request.method() === "GET") return route.continue();
-			if (
-				request.method() === "POST" &&
-				url.origin === "https://www.instagram.com" &&
-				url.pathname === "/api/v1/direct_v2/threads/broadcast/text/" &&
-				allowSend &&
-				sends === 0 &&
-				!signal.aborted
-			) {
-				sends++;
-				return route.continue();
-			}
 			return route.abort("blockedbyclient");
 		});
 	} catch {
@@ -57,6 +54,7 @@ export const createDmTransport = async (source: Page, signal: AbortSignal) => {
 		throw new DmError("SESSION_NOT_READY", "DM用ブラウザの準備ができません");
 	}
 	const account = async () => {
+		assertSession();
 		const result = storyAccountSchema.safeParse(await page.evaluate(executeDmInBrowser, { op: "account" as const }));
 		if (!result.success) throw new DmError("SESSION_NOT_READY", "ログインアカウントを確認できません");
 		return result.data;
@@ -67,6 +65,7 @@ export const createDmTransport = async (source: Page, signal: AbortSignal) => {
 			const result = dmInboxSchema.safeParse(
 				await page.evaluate(executeDmInBrowser, { op: "inbox" as const, page: input }),
 			);
+			assertSession();
 			if (!result.success) throw new DmError("UPSTREAM_CHANGED", "DM一覧の取得結果を確認できません");
 			return result.data;
 		},
@@ -74,26 +73,19 @@ export const createDmTransport = async (source: Page, signal: AbortSignal) => {
 			const result = dmMessagesSchema.safeParse(
 				await page.evaluate(executeDmInBrowser, { op: "thread" as const, threadId, page: input }),
 			);
+			assertSession();
 			if (!result.success) throw new DmError("UPSTREAM_CHANGED", "会話の取得結果を確認できません");
 			return result.data;
 		},
 		send: async (threadId: string, text: string, clientContext: string, expected: StoryAccount) => {
 			if (sends > 0 || signal.aborted) throw new DmError("DELIVERY_UNKNOWN", "DMを再送できません");
-			allowSend = true;
-			try {
-				const result = await page.evaluate(executeDmInBrowser, {
-					op: "send" as const,
-					threadId,
-					text,
-					clientContext,
-					account: expected,
-				});
-				if (typeof result !== "string" || !/^\d{1,80}$/.test(result) || sends !== 1)
-					throw new DmError("DELIVERY_UNKNOWN", "送信結果を確認できません");
-				return result;
-			} finally {
-				allowSend = false;
-			}
+
+			sends++;
+			if (!clientContext) throw new DmError("DELIVERY_UNKNOWN", "送信操作IDがありません");
+			const result = await sendDmThroughUi(source, signal, threadId, text, expected);
+			if (typeof result !== "string" || !/^\d{1,80}$/.test(result))
+				throw new DmError("DELIVERY_UNKNOWN", "送信結果を確認できません");
+			return result;
 		},
 		close: async () => {
 			signal.removeEventListener("abort", abort);

@@ -25,17 +25,13 @@ type Data = {
 	viewer?: User;
 	inbox?: { threads?: Thread[]; has_older?: boolean; oldest_cursor?: string };
 	thread?: Thread;
-	payload?: { thread_id?: string; item_id?: string; client_context?: string };
-	message_metadata?: { thread_id?: string; item_id?: string; client_context?: string }[];
 };
 
 // 認証値とraw responseはブラウザ内に留め、許可したフィールドだけを返す。
 export const executeDmInBrowser = async (input: {
-	op: "account" | "inbox" | "thread" | "send";
+	op: "account" | "inbox" | "thread";
 	page?: DmPageInput;
 	threadId?: string;
-	text?: string;
-	clientContext?: string;
 	account?: StoryAccount;
 }): Promise<StoryAccount | DmInbox | DmMessages | string | null> => {
 	try {
@@ -54,10 +50,6 @@ export const executeDmInBrowser = async (input: {
 						url: string,
 						options: { query: Record<string, string> },
 					) => Promise<{ data: Data; statusCode?: number }>;
-					apiPost: (
-						url: string,
-						options: { body: Record<string, string> },
-					) => Promise<{ data: Data; statusCode?: number }>;
 				};
 			}
 		).require;
@@ -72,37 +64,6 @@ export const executeDmInBrowser = async (input: {
 		if (input.account && (input.account.id !== account.id || input.account.username !== account.username)) return null;
 		if (input.op === "account") return account;
 		const api = loader("PolarisInstapi");
-		if (input.op === "send") {
-			if (
-				!input.threadId ||
-				!/^\d{1,80}$/.test(input.threadId) ||
-				!input.text?.trim() ||
-				input.text.length > 1000 ||
-				!input.clientContext
-			)
-				return null;
-			// 固定のテキスト送信方式。Cookie等はPolarisInstapi自身が設定する。
-			// https://github.com/dilame/instagram-private-api/blob/master/src/repositories/direct-thread.repository.ts
-			const response = await api.apiPost("/api/v1/direct_v2/threads/broadcast/text/", {
-				body: {
-					action: "send_item",
-					thread_ids: JSON.stringify([input.threadId]),
-					text: input.text,
-					client_context: input.clientContext,
-					mutation_token: input.clientContext,
-				},
-			});
-			const candidates = [response.data.payload, ...(response.data.message_metadata ?? [])];
-			const proof = candidates.find(
-				(entry) =>
-					entry !== undefined &&
-					entry.thread_id === input.threadId &&
-					entry.client_context === input.clientContext &&
-					typeof entry.item_id === "string" &&
-					/^\d{1,80}$/.test(entry.item_id),
-			);
-			return response.statusCode === 200 && proof ? (proof.item_id ?? null) : null;
-		}
 		const page = input.page;
 		if (!page || !Number.isInteger(page.limit) || page.limit < 1 || page.limit > 50) return null;
 		const query: Record<string, string> = { limit: String(page.limit) };

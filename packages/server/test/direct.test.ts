@@ -1,15 +1,15 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
-import { executeDmInBrowser } from "../src/direct/browser-execute.js";
 import type { DmTransport } from "../src/direct/browser.js";
+import { executeDmInBrowser } from "../src/direct/browser-execute.js";
 import { DmService } from "../src/direct/service.js";
 import { DmStore } from "../src/direct/store.js";
+import type { RelayProfile } from "../src/types.js";
 import { SerialQueue } from "../src/utils/queue.js";
 import { loadSettings } from "../src/utils/settings.js";
-import type { RelayProfile } from "../src/types.js";
 
 const account = { id: "123", username: "owner" };
 const thread = {
@@ -265,44 +265,15 @@ describe("ブラウザ内DM通信", () => {
 		expect(f.post).not.toHaveBeenCalled();
 		expect(f.get).toHaveBeenCalledWith("/api/v1/direct_v2/inbox/", { query: { limit: "5" } });
 	});
-	it("固定の宛先・本文・client_contextで送り、宛先と文脈の一致を要求する", async () => {
-		const context = "00000000-0000-4000-8000-000000000001";
-		const f = mockBrowser({ payload: { thread_id: "999", client_context: context, item_id: "888" } });
-		expect(
-			await executeDmInBrowser({ op: "send", threadId: "999", text: "こんにちは", clientContext: context, account }),
-		).toBe("888");
-		expect(f.post).toHaveBeenCalledExactlyOnceWith("/api/v1/direct_v2/threads/broadcast/text/", {
-			body: {
-				action: "send_item",
-				thread_ids: '["999"]',
-				text: "こんにちは",
-				client_context: context,
-				mutation_token: context,
-			},
-		});
-		for (const payload of [
-			{ thread_id: "111", client_context: context, item_id: "888" },
-			{ thread_id: "999", client_context: "wrong", item_id: "888" },
-			{},
-		]) {
-			const bad = mockBrowser({ payload });
-			expect(
-				await executeDmInBrowser({ op: "send", threadId: "999", text: "こんにちは", clientContext: context, account }),
-			).toBeNull();
-			expect(bad.post).toHaveBeenCalledOnce();
-		}
-	});
 	it("セッション不一致・任意path・別originでは通信しない", async () => {
 		const f = mockBrowser({});
-		expect(
-			await executeDmInBrowser({ op: "send", threadId: "../other", text: "hello", clientContext: "context", account }),
-		).toBeNull();
+		expect(await executeDmInBrowser({ op: "thread", threadId: "../other", page: { limit: 1 }, account })).toBeNull();
 		expect(
 			await executeDmInBrowser({
-				op: "send",
+				op: "thread",
 				threadId: "999",
-				text: "hello",
-				clientContext: "context",
+				page: { limit: 1 },
+
 				account: { id: "456", username: "other" },
 			}),
 		).toBeNull();
