@@ -27,3 +27,14 @@ ul { color: #9ba7bc; padding-left: 18px; line-height: 1.8; }
 .trace time, .trace span { color: #9ba7bc; }
 @media (max-width: 760px) { .auth { grid-template-columns: 1fr; } .auth p { grid-column: auto; } .trace { grid-template-columns: 1fr 1fr; } }
 
+.story-composer fieldset { display: grid; gap: 10px; border: 1px solid #30394a; border-radius: 12px; padding: 20px; }
+select, textarea { color: inherit; background: #111722; border: 1px solid #30394a; border-radius: 8px; padding: 10px 12px; }
+textarea { min-height: 80px; }
+button:disabled { opacity: 0.45; cursor: default; }
+.story-preview, .story-result { margin-top: 18px; }
+.story-preview img, .story-preview video { display: block; max-width: 100%; width: 270px; max-height: 480px; object-fit: contain; background: #080b12; }
+.story-account { font-size: 20px; }
+.story-confirm { display: flex; gap: 10px; align-items: center; margin-top: 18px; }
+.publish { background: #c63956; border-color: #c63956; }
+.secondary { background: #111722; border-color: #30394a; margin-left: 12px; }
+.story-result p { overflow-wrap: anywhere; }

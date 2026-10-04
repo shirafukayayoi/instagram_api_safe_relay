@@ -111,6 +111,8 @@ Invoke-RestMethod -Headers $headers "http://127.0.0.1:3000/v1/story-repost-jobs/
 
 ### ローカル素材のストーリーズ投稿
 
+Dashboardには素材・実ログインアカウント・通常公開／親しい友達を表示する投稿前プレビューがあります。明示確認後の専用`/publish`呼出しで公開し、再読込・通信切断後は同じ操作IDの照会だけを行います。詳細と従来APIの互換性は[投稿前プレビューと確認](packages/server/README.md#投稿前プレビューと確認)を参照してください。
+
 既定では無効です。Chromiumと`ffprobe`が必要です。`settings.json`へ設定し、relayを再起動してください。
 
 ```json

@@ -66,7 +66,7 @@ const fixture = async (publisher = backend()) => {
 	const factory = vi.fn(async () => publisher);
 	const service = new StoryService({
 		settings,
-		profiles: [profile],
+		profiles: [profile, { name: "two", state: "ready" }],
 		store,
 		publisher: factory,
 		prepare: (file, roots, assets, id, probe) => prepareMedia(file, roots, assets, id, probe, imageProbe),
@@ -408,6 +408,184 @@ describe("ジョブと重複防止", () => {
 		await store.open();
 		stores.push(store);
 		expect(store.get(job.id)?.job).toMatchObject({ state: "failed", errorCode: "INTERRUPTED" });
+	});
+});
+
+describe("投稿前プレビューと確認", () => {
+	it("実アカウントと表示用素材を返し、確認前はアップロードも公開も行わない", async () => {
+		const test = await fixture();
+		const preview = await test.service.preview("one", {
+			filePath: test.filePath,
+			audience: "close_friends",
+			caption: "private draft",
+		});
+		expect(preview).toMatchObject({
+			profile: "one",
+			account,
+			audience: "close_friends",
+			media: { sha256: createHash("sha256").update(png).digest("hex") },
+		});
+		expect(JSON.stringify(preview)).not.toContain(test.filePath);
+		expect(JSON.stringify(preview)).not.toContain("private draft");
+		expect(Buffer.from((await test.service.previewMedia("one", preview.id)).bytes)).toEqual(png);
+		expect((await test.service.getPreview("one", preview.id)).job).toBeNull();
+		expect(test.publisher.upload).not.toHaveBeenCalled();
+		expect(test.publisher.publish).not.toHaveBeenCalled();
+		await expect(test.service.publishPreview("one", preview.id, {})).rejects.toMatchObject({
+			code: "CONFIRMATION_REQUIRED",
+		});
+		await expect(test.service.publishPreview("one", preview.id, { confirmed: false })).rejects.toMatchObject({
+			code: "CONFIRMATION_REQUIRED",
+		});
+		await expect(
+			test.service.publishPreview("one", preview.id, { confirmed: true, audience: "all" }),
+		).rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+	});
+	it("キャンセル・期限切れ・別プロファイルでは公開せず、素材を削除する", async () => {
+		const test = await fixture();
+		const preview = await test.service.preview("one", { filePath: test.filePath });
+		await expect(test.service.getPreview("two", preview.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+		await test.service.cancelPreview("one", preview.id);
+		await test.service.cancelPreview("one", preview.id);
+		await expect(test.service.publishPreview("one", preview.id, { confirmed: true })).rejects.toMatchObject({
+			code: "NOT_FOUND",
+		});
+		expect(await fs.readdir(test.store.assetDirectory)).toEqual([]);
+		const expired = await test.service.preview("one", { filePath: test.filePath });
+		const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(expired.expiresAt));
+		try {
+			await expect(test.service.publishPreview("one", expired.id, { confirmed: true })).rejects.toMatchObject({
+				code: "PREVIEW_EXPIRED",
+			});
+		} finally {
+			clock.mockRestore();
+		}
+		expect(test.publisher.upload).not.toHaveBeenCalled();
+		expect(test.publisher.publish).not.toHaveBeenCalled();
+	});
+	it("原本の差し替えとプレビューコピーの改変を検出し再確認を要求する", async () => {
+		const test = await fixture();
+		const preview = await test.service.preview("one", { filePath: test.filePath });
+		await fs.writeFile(test.filePath, Buffer.concat([png, Buffer.from("changed")]));
+		await expect(test.service.publishPreview("one", preview.id, { confirmed: true })).rejects.toMatchObject({
+			code: "PREVIEW_CHANGED",
+		});
+		const next = await test.service.preview("one", { filePath: test.filePath });
+		const [name] = await fs.readdir(test.store.assetDirectory);
+		await fs.writeFile(path.join(test.store.assetDirectory, name as string), "tampered");
+		await expect(test.service.previewMedia("one", next.id)).rejects.toMatchObject({ code: "PREVIEW_CHANGED" });
+		expect(test.publisher.upload).not.toHaveBeenCalled();
+		expect(test.publisher.publish).not.toHaveBeenCalled();
+	});
+	it.each(["before_upload", "after_upload"])("確認後のアカウント変更を%sで検出して公開しない", async (phase) => {
+		const test = await fixture();
+		const getAccount = vi.mocked(test.publisher.getAccount);
+		getAccount.mockResolvedValueOnce(account);
+		if (phase === "after_upload") getAccount.mockResolvedValueOnce(account);
+		getAccount.mockResolvedValue({ id: "456", username: "other" });
+		const preview = await test.service.preview("one", { filePath: test.filePath });
+		const job = await test.service.publishPreview("one", preview.id, { confirmed: true });
+		expect(await waitFor(test.service, job.id)).toMatchObject({
+			state: "failed",
+			errorCode: "ACCOUNT_CHANGED",
+			account,
+		});
+		if (phase === "before_upload") expect(test.publisher.upload).not.toHaveBeenCalled();
+		expect(test.publisher.publish).not.toHaveBeenCalled();
+	});
+	it("連打は同じジョブにまとめ、受理済み操作のキャンセルは拒否する", async () => {
+		const test = await fixture();
+		const preview = await test.service.preview("one", {
+			filePath: test.filePath,
+			audience: "close_friends",
+			caption: "draft",
+		});
+		const jobs = await Promise.all(
+			Array.from({ length: 5 }, () => test.service.publishPreview("one", preview.id, { confirmed: true })),
+		);
+		expect(new Set(jobs.map((job) => job.id)).size).toBe(1);
+		expect((await waitFor(test.service, preview.id)).state).toBe("published");
+		expect(test.publisher.publish).toHaveBeenCalledExactlyOnceWith(account, "close_friends", "draft");
+		await expect(test.service.cancelPreview("one", preview.id)).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+	});
+	it.each(["published", "unknown"])("応答喪失・再起動後も%sの同じ操作を再送しない", async (state) => {
+		const test = await fixture();
+		if (state === "unknown") vi.mocked(test.publisher.publish).mockRejectedValue(new Error("lost response"));
+		const preview = await test.service.preview("one", { filePath: test.filePath });
+		await test.service.publishPreview("one", preview.id, { confirmed: true });
+		expect((await waitFor(test.service, preview.id)).state).toBe(state);
+		await test.service.close();
+		const store = new StoryStore(test.store.directory);
+		await store.open();
+		stores.push(store);
+		const service = new StoryService({
+			settings: test.settings,
+			profiles: [test.profile],
+			store,
+			publisher: test.factory,
+		});
+		services.push(service);
+		expect((await service.getPreview("one", preview.id)).job?.state).toBe(state);
+		expect((await service.publishPreview("one", preview.id, { confirmed: true })).state).toBe(state);
+		expect(test.publisher.publish).toHaveBeenCalledOnce();
+	});
+	it("確認受付の台帳保存に失敗したらアップロード・公開しない", async () => {
+		const test = await fixture();
+		const preview = await test.service.preview("one", { filePath: test.filePath });
+		vi.spyOn(test.store, "save").mockRejectedValue(new StoryError("STORAGE_UNAVAILABLE", "disk failure"));
+		await expect(test.service.publishPreview("one", preview.id, { confirmed: true })).rejects.toMatchObject({
+			code: "STORAGE_UNAVAILABLE",
+		});
+		expect(test.publisher.upload).not.toHaveBeenCalled();
+		expect(test.publisher.publish).not.toHaveBeenCalled();
+	});
+	it("HTTPでプレビュー・素材・照会・取消・公開を認証し、公開要求を分離する", async () => {
+		const test = await fixture();
+		const token = "0123456789abcdef0123456789abcdef";
+		const headers = { host: "127.0.0.1", authorization: `Bearer ${token}`, "content-type": "application/json" };
+		const app = createApp({ profiles: [test.profile, { name: "two", state: "ready" }], token, stories: test.service });
+		const response = await app.request("http://127.0.0.1/v1/story-previews", {
+			method: "POST",
+			headers: { ...headers, "x-profile-name": "one" },
+			body: JSON.stringify({ filePath: test.filePath }),
+		});
+		expect(response.status).toBe(200);
+		const { data } = await response.json();
+		const route = `http://127.0.0.1/v1/story-previews/${data.id}`;
+		for (const [suffix, method] of [
+			["", "GET"],
+			["/media", "GET"],
+			["", "DELETE"],
+			["/publish", "POST"],
+		]) {
+			expect((await app.request(route + suffix, { method, headers: { host: "127.0.0.1" } })).status).toBe(401);
+			expect(
+				(
+					await app.request(route + suffix, {
+						method,
+						headers: { ...headers, "x-profile-name": "two" },
+						body: method === "POST" ? JSON.stringify({ confirmed: true }) : undefined,
+					})
+				).status,
+			).toBe(method === "DELETE" ? 200 : 404);
+		}
+		expect(
+			(await app.request(`${route}/media`, { headers: { ...headers, "x-profile-name": "one" } })).headers.get(
+				"content-type",
+			),
+		).toBe("image/png");
+		expect(test.publisher.publish).not.toHaveBeenCalled();
+		const published = await app.request(`${route}/publish`, {
+			method: "POST",
+			headers: { ...headers, "x-profile-name": "one" },
+			body: JSON.stringify({ confirmed: true }),
+		});
+		expect(published.status).toBe(202);
+		await waitFor(test.service, data.id);
+		expect(test.publisher.publish).toHaveBeenCalledOnce();
+		const disabled = createApp({ profiles: [test.profile], token });
+		expect((await disabled.request(route, { headers })).status).toBe(403);
+		expect((await disabled.request(route, { method: "DELETE", headers })).status).toBe(403);
 	});
 });
 

@@ -25,6 +25,9 @@ export const storyErrorCodes = [
 	"INTERRUPTED",
 	"STORAGE_UNAVAILABLE",
 	"NOT_FOUND",
+	"CONFIRMATION_REQUIRED",
+	"PREVIEW_EXPIRED",
+	"PREVIEW_CHANGED",
 ] as const;
 export const storyAccountSchema = z.strictObject({ id: z.string().regex(/^\d+$/), username: z.string().min(1) });
 export const storyJobSchema = z.strictObject({
@@ -42,3 +45,22 @@ export type CreateStoryInput = z.infer<typeof createStoryInputSchema>;
 export type StoryAccount = z.infer<typeof storyAccountSchema>;
 export type StoryJob = z.infer<typeof storyJobSchema>;
 export type StoryErrorCode = (typeof storyErrorCodes)[number];
+
+/** プレビューは公開もInstagramへのアップロードも行わない。 */
+export const confirmStoryInputSchema = z.strictObject({ confirmed: z.literal(true) });
+export type StoryPreview = {
+	id: string;
+	profile: string;
+	account: StoryAccount;
+	audience: CreateStoryInput["audience"];
+	expiresAt: string;
+	media: {
+		mimeType: "image/jpeg" | "image/png" | "video/mp4";
+		size: number;
+		sha256: string;
+		width: number;
+		height: number;
+		durationSeconds: number | null;
+	};
+};
+export type StoryPreviewStatus = { preview: StoryPreview | null; job: StoryJob | null };
