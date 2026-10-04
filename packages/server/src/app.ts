@@ -82,7 +82,7 @@ export const createApp = ({
 		c.header("Cross-Origin-Opener-Policy", "same-origin");
 		c.header(
 			"Content-Security-Policy",
-			"default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+			"default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
 		);
 		await next();
 	});
@@ -230,6 +230,66 @@ export const createApp = ({
 			error instanceof StoryError ? error : new StoryError("STORAGE_UNAVAILABLE", "投稿要求を処理できません");
 		return c.json({ error: { code: safe.code, message: safe.message } }, storyStatus(safe.code));
 	};
+	app.use("/v1/story-previews", bodyLimit({ maxSize: 8192 }));
+	app.use("/v1/story-previews/:id/publish", bodyLimit({ maxSize: 8192 }));
+	const previewProfile = (c: Context) => {
+		if (!stories) throw new StoryError("STORIES_DISABLED", "ストーリーズ投稿は無効です");
+		const profile = resolveProfile(c.req.header("x-profile-name"));
+		if (!profile) throw new StoryError("UNKNOWN_PROFILE", "有効なx-profile-nameを指定してください");
+		return profile.name;
+	};
+	const storyJson = async (c: Context): Promise<unknown> => {
+		try {
+			return await c.req.json();
+		} catch {
+			throw new StoryError("INVALID_INPUT", "有効なJSONが必要です");
+		}
+	};
+	// 素材表示・状態照会・キャンセルは公開処理を開始しない。
+	app.post("/v1/story-previews", async (c) => {
+		try {
+			const profile = previewProfile(c);
+			return c.json({ data: await stories?.preview(profile, await storyJson(c)) });
+		} catch (error) {
+			return storyFailure(c, error);
+		}
+	});
+	app.get("/v1/story-previews/:id", async (c) => {
+		try {
+			const profile = previewProfile(c);
+			return c.json({ data: await stories?.getPreview(profile, c.req.param("id")) });
+		} catch (error) {
+			return storyFailure(c, error);
+		}
+	});
+	app.get("/v1/story-previews/:id/media", async (c) => {
+		try {
+			const profile = previewProfile(c);
+			const media = await stories?.previewMedia(profile, c.req.param("id"));
+			if (!media) throw new StoryError("STORIES_DISABLED", "ストーリーズ投稿は無効です");
+			return c.body(new Uint8Array(media.bytes), 200, { "Content-Type": media.mimeType });
+		} catch (error) {
+			return storyFailure(c, error);
+		}
+	});
+	app.delete("/v1/story-previews/:id", async (c) => {
+		try {
+			const profile = previewProfile(c);
+			await stories?.cancelPreview(profile, c.req.param("id"));
+			return c.json({ cancelled: true });
+		} catch (error) {
+			return storyFailure(c, error);
+		}
+	});
+	// この呼出しだけが確認済みプレビューのアップロード・公開を開始する。
+	app.post("/v1/story-previews/:id/publish", async (c) => {
+		try {
+			const profile = previewProfile(c);
+			return c.json({ data: await stories?.publishPreview(profile, c.req.param("id"), await storyJson(c)) }, 202);
+		} catch (error) {
+			return storyFailure(c, error);
+		}
+	});
 	app.post("/v1/stories", async (c) => {
 		try {
 			if (!stories) throw new StoryError("STORIES_DISABLED", "ストーリーズ投稿は無効です");

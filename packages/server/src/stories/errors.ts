@@ -18,6 +18,9 @@ export const storyStatus = (code: StoryErrorCode): 400 | 403 | 404 | 409 | 413 |
 		case "NOT_FOUND":
 			return 404;
 		case "IDEMPOTENCY_CONFLICT":
+		case "CONFIRMATION_REQUIRED":
+		case "PREVIEW_EXPIRED":
+		case "PREVIEW_CHANGED":
 			return 409;
 		case "MEDIA_TOO_LARGE":
 			return 413;

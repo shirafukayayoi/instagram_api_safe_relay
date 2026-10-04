@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { type SafeTrace, parseSseChunk } from "./events";
+import { StoryComposer } from "./story-composer";
 import "./style.css";
 
 type ProfileStatus = {
@@ -53,7 +54,7 @@ const App = () => {
 		<main>
 			<header>
 				<div>
-					<p className="eyebrow">LOCAL READ-ONLY RELAY</p>
+					<p className="eyebrow">LOCAL SAFE RELAY</p>
 					<h1>Instagram API Safe Relay</h1>
 				</div>
 				<span className="local">127.0.0.1 only</span>
@@ -78,6 +79,8 @@ const App = () => {
 					))}
 				</div>
 			</section>
+
+			<StoryComposer key={token} token={token} profiles={profiles} />
 
 			<section>
 				<h2>Redacted traces</h2>
