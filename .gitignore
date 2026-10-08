@@ -13,3 +13,5 @@ story_data/
 story_mention_data/
 dm_data/
 .playwright-cli/
+__pycache__/
+*.pyc

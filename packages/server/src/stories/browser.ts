@@ -147,11 +147,16 @@ export const createBrowserStoryPublisher = async (sourcePage: Page, signal: Abor
 			throw new StoryError("CATALOG_STALE", "投稿カタログが変更されています");
 		uploadId = prepared;
 		check();
-		await page.locator("#instagram-relay-story-file").setInputFiles({
-			name: media.mimeType === "video/mp4" ? "story.mp4" : media.mimeType === "image/png" ? "story.png" : "story.jpg",
-			mimeType: media.mimeType,
-			buffer: bytes,
-		});
+		// Playwrightのインメモリ転送は50MiBまで。大きい素材は検証済みローカルコピーを使う。
+		await page.locator("#instagram-relay-story-file").setInputFiles(
+			bytes.length > 50 * 1024 * 1024
+				? media.assetPath
+				: {
+						name: media.mimeType === "video/mp4" ? "story.mp4" : media.mimeType === "image/png" ? "story.png" : "story.jpg",
+						mimeType: media.mimeType,
+						buffer: bytes,
+					},
+		);
 		const result = await page.evaluate(
 			async ({ uploadId, media }) => {
 				// raw responseと例外はブラウザ内だけで扱う。
@@ -222,6 +227,12 @@ export const createBrowserStoryPublisher = async (sourcePage: Page, signal: Abor
 		);
 		if (!result) throw new StoryError("UPLOAD_FAILED", "素材のアップロードを確認できませんでした");
 		check();
+		// 長い動画は、アップロード受付後もInstagram側の変換処理が続く場合がある。
+		// 公開要求を繰り返さず、公開前に処理時間を確保する。
+		if (media.mimeType === "video/mp4" && (media.durationSeconds ?? 0) >= 30) {
+			await page.waitForTimeout(30_000);
+			check();
+		}
 		uploadCompleted = true;
 	};
 

@@ -170,3 +170,7 @@ pnpm test:live
 ## ライセンスと帰属
 
 MIT License。本プロジェクトの構造と一部の実装方針は [fa0311/twitter_api_safe_relay](https://github.com/fa0311/twitter_api_safe_relay) を参考にしています。
+
+## ハイライト登録
+
+Relayで公開済みのストーリーを、自分の既存ハイライトへ追加できます。URL投稿Skillの`--highlight`で投稿後の登録まで実行できます。[API・再開と重複防止・検証範囲](docs/highlights.md)と[配布用Skill](skills/instagram-story-from-url/SKILL.md)を参照してください。

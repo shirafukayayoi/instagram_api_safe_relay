@@ -1,5 +1,6 @@
 import { z } from "zod";
 export * from "./stories.js";
+export * from "./highlights.js";
 
 /** リレーが提供する、公開情報のみを扱う操作名。 */
 export const operationNames = [

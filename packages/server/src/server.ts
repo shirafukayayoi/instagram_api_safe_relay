@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { serve } from "@hono/node-server";
 import pino from "pino";
 import { createApp } from "./app.js";
@@ -11,6 +12,8 @@ import { DmStore } from "./direct/store.js";
 import { DmService } from "./direct/service.js";
 import { MentionStore } from "./story-mentions/store.js";
 import { MentionService } from "./story-mentions/service.js";
+import { HighlightStore } from "./highlights/store.js";
+import { HighlightService } from "./highlights/service.js";
 
 const settingsPath = process.env.INSTAGRAM_RELAY_SETTINGS ?? "./../../settings.json";
 const token = process.env.INSTAGRAM_RELAY_API_TOKEN;
@@ -48,6 +51,12 @@ if (settings.stories.enabled) {
 			logger.error({ jobId: id, errorCode: "STORAGE_UNAVAILABLE" }, "ストーリー台帳の保存に失敗しました"),
 	});
 }
+let highlights: HighlightService | undefined;
+if (stories) {
+	const store = new HighlightStore(path.join(settings.stories.stateDir, "highlights"));
+	await store.open();
+	highlights = new HighlightService({ settings: settings.stories, profiles, stories, store });
+}
 let direct: DmService | undefined;
 if (settings.direct.enabled) {
 	const store = new DmStore(settings.direct.stateDir);
@@ -68,12 +77,14 @@ const app = createApp({
 	...(stories ? { stories } : {}),
 	...(direct ? { direct } : {}),
 	...(storyMentions ? { storyMentions } : {}),
+	...(highlights ? { highlights } : {}),
 });
 const httpServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: settings.port });
 let shuttingDown = false;
 const shutdown = async () => {
 	if (shuttingDown) return;
 	shuttingDown = true;
+	await highlights?.close();
 	await stories?.close();
 	await direct?.close();
 	await storyMentions?.close();
