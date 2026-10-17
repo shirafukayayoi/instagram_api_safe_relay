@@ -4,6 +4,7 @@ dist/
 .wxt/
 coverage/
 user_data/
+private_sessions/
 .env
 settings.json
 *.log
