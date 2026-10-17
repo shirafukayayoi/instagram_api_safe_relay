@@ -19,7 +19,7 @@ Relayの設定で投稿を有効にし、ダウンロード先 `work/story-smoke
 
 ユーザーが内部APIの直接利用を許可した環境では、Relayの `profiles[].browser` を `{"type":"http","sessionFile":"../../private_sessions/account1.json"}` に設定できる。HTTPモードでもこのSkillの引数・台帳・プレビュー・親しい友達・キャプション・ハイライトの扱いは共通。Chromiumを起動せず、固定のHTTP通信だけで処理する。設定・専用ブラウザーからの移行・手動再ログインはRelayの `docs/http-mode.md` に従う。認証ファイルはローカルのGit管理外へ権限600で保存し、SkillのDrive同期対象へ入れない。ログイン・2FA・challengeは手動で行い、自動再ログイン・書き込み要求の再送はしない。
 
-2026-10-17にHTTPモードで実アカウント照合、親しい友達向けプレビュー、既存ハイライト13件と登録済みストーリーIDの取得を確認した。HTTP経由の素材アップロード・実公開・新規ハイライト登録は模擬通信で検証し、実アカウントへの書き込み試験は未実施。
+2026-10-17にHTTPモードで実アカウント照合、親しい友達向けプレビュー、既存ハイライト13件と登録済みストーリーIDの取得を確認した。2026-10-17にユーザー指定のYouTube動画の冒頭60秒を背景ぼかし付き1080×1920へ変換し、HTTP経由で通常公開、その同じメディアの既存「Music」ハイライトへの追加完了を確認した。Chromiumは起動していない。HTTP経由の親しい友達・キャプション付き実公開は未検証。
 
 ## 起動・診断
 
@@ -63,7 +63,7 @@ python '<skill-dir>/scripts/story_from_url.py' 'https://vt.tiktok.com/ZSb5JR1mx/
 
 2026-10-08の作業開始時にGitHubの`origin/main`とローカルHEAD（`0173c1a`）の一致、yt-dlp安定版`2026.08.19`への更新を確認した。ハイライト登録を追加したpush対象の130テスト・型チェック・ビルド・lint、Skillの16テスト、模擬Web画面での新規追加・選択保持・保存後確認を実行した。
 
-Skill例のTikTok短縮URLから配信元のH.264/AAC MP4（720×1280、約6.18秒）を取得し、`account1`の実ログインアカウントと`close_friends`のプレビューを確認した。この検証ではアップロード・公開を行っていない。YouTubeの実URL取得とキャプション付き実公開は今回未検証。
+Skill例のTikTok短縮URLから配信元のH.264/AAC MP4（720×1280、約6.18秒）を取得し、`account1`の実ログインアカウントと`close_friends`のプレビューを確認した。この検証ではアップロード・公開を行っていない。2026-10-17にはYouTube実URLの取得、冒頭60秒の縦変換、通常公開と既存ハイライトへの新規追加も確認した。キャプション付き実公開は未検証。
 
 ```powershell
 python '<skill-dir>/scripts/test_story_from_url.py'
@@ -96,6 +96,6 @@ Relayの`GET /v1/highlights`で実アカウントと登録先IDを確認し、`P
 
 動画はMP4、H.264、音声はAACまたはなし、1〜60秒、100MiB以下、各辺4096px以下。取得できない形式や制限超過は理由を報告して停止する。ダウンロード成功を投稿成功と報告しない。
 
-ユーザーが明示的に切り出しを指定した場合は `--clip-start 0 --clip-end 60` のように秒数を指定する。再開時も同じ範囲を指定し、同じ操作IDの範囲を変更しない。指定範囲は元動画内の1〜60秒。原本を保存し、ffprobeで変換後の長さと形式を検証する。23.976fpsなどの端数による60秒超過を避けるため、変換時は切り上げた整数fps（最大60）を使う。変換内容・コマンド・原本と出力のSHA256を操作JSONに保存する。50MiB超の検証済み素材はRelayのファイルパス転送を使う（Playwrightのbuffer転送は50MiBまで）。
+ユーザーが明示的に切り出しを指定した場合は `--clip-start 0 --clip-end 60` のように秒数を指定する。再開時も同じ範囲を指定し、同じ操作IDの範囲を変更しない。指定範囲は元動画内の1〜60秒。原本を保存し、ffprobeで変換後の長さと形式を検証する。23.976fpsなどの端数による60秒超過を避けるため、変換時は切り上げた整数fps（最大60）を使い、音声は指定尺のサンプル数で切ってタイムスタンプを0から振り直す。変換内容・コマンド・原本と出力のSHA256を操作JSONに保存する。50MiB超の検証済み素材はRelayのファイルパス転送を使う（Playwrightのbuffer転送は50MiBまで）。
 
 縦変換の見た目は [MediaDownloaderTool.py](https://github.com/shirafukayayoi/Shirafuka-Practice/blob/main/Python/MediaDownloaderTool.py) のCPU処理に合わせる。エンコードはこのPCのCPU負荷と投稿上限を考慮してlibx264 veryfast/CRF20を使う。映像の配置・背景効果は同じ。素材検証は `python scripts/test_story_media.py` でも実行できる（Instagramへの通信なし）。
