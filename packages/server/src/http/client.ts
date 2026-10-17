@@ -102,7 +102,7 @@ export class InstagramHttpClient {
 		signal: AbortSignal,
 		body?: URLSearchParams | Uint8Array,
 		extraHeaders: Record<string, string> = {},
-		kind: "json" | "html" = "json",
+		kind: "json" | "html" | "rupload-init" = "json",
 	): Promise<Json> {
 		if (this.#closed || signal.aborted) throw new StoryError("INTERRUPTED", "HTTP操作が中断されました");
 		const now = Date.now() / 1000;
@@ -174,7 +174,14 @@ export class InstagramHttpClient {
 			}
 			if (
 				!response.ok ||
-				(endpoint === "/graphql/query" ? !data.data || data.errors || data.error : data.status !== "ok")
+				(kind === "rupload-init"
+					? !Number.isSafeInteger(data.offset) ||
+						Number(data.offset) < 0 ||
+						data.error ||
+						(data.status !== undefined && data.status !== "ok")
+					: endpoint === "/graphql/query"
+						? !data.data || data.errors || data.error
+						: data.status !== "ok")
 			)
 				throw new StoryError("CATALOG_STALE", "Instagramによる受付を確認できません");
 			await this.#refreshCookies(response.headers);
@@ -428,7 +435,14 @@ export class InstagramHttpClient {
 				retry_context: JSON.stringify({ num_step_auto_retry: 0, num_reupload: 0, num_step_manual_retry: 0 }),
 			}),
 		};
-		const initialized = await this.#json("i.instagram.com", `/rupload_igvideo/${entity}`, signal, undefined, headers);
+		const initialized = await this.#json(
+			"i.instagram.com",
+			`/rupload_igvideo/${entity}`,
+			signal,
+			undefined,
+			headers,
+			"rupload-init",
+		);
 		if (initialized.offset !== 0) throw new StoryError("UPLOAD_FAILED", "アップロード開始位置が不正です。再送しません");
 		await this.#json("i.instagram.com", `/rupload_igvideo/${entity}`, signal, bytes, {
 			...headers,

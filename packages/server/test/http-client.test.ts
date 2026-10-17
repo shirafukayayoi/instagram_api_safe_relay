@@ -153,8 +153,25 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		expect(body.get("doc_id")).toBe("26970053832668570");
 		expect(body.get("__comet_req")).toBe("7");
 	});
+	it("アップロード開始専用の形式を通常APIに流用せず、不明な開始応答を拒否する", async () => {
+		const f = await fixture([new Response('{"offset":0}')]);
+		const client = await f.open();
+		await expect(client.getAccount(signal())).rejects.toMatchObject({ code: "CATALOG_STALE" });
+		for (const data of [{}, { offset: -1 }, { offset: 0, status: "fail" }]) {
+			const other = await fixture([new Response(JSON.stringify(data))]);
+			const instance = await other.open();
+			await expect(
+				instance.uploadVideo("1234567890123", new Uint8Array([1]), 720, 1280, 2, signal()),
+			).rejects.toMatchObject({ code: "CATALOG_STALE" });
+			expect(other.fetcher).toHaveBeenCalledTimes(1);
+		}
+	});
 	it("素材を固定アップロード先へ送り、既存offsetがあれば停止する", async () => {
-		const f = await fixture([ok({ offset: 0 }), ok({}), ok({ upload_id: "1234567890123" })]);
+		const f = await fixture([
+			new Response(JSON.stringify({ dc: "test", offset: 0 })),
+			ok({}),
+			ok({ upload_id: "1234567890123" }),
+		]);
 		const client = await f.open();
 		await client.uploadVideo("1234567890123", new Uint8Array([1, 2]), 720, 1280, 2, signal());
 		await client.uploadPhoto("1234567890123", new Uint8Array([3]), 720, 1280, "image/jpeg", signal());
