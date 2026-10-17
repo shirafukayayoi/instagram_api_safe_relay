@@ -45,7 +45,7 @@ python '<skill-dir>/scripts/story_from_url.py' --check --start-relay --profile a
 
 1. ユーザーが指定したURL、投稿先、公開範囲、任意のキャプションを確認する。明示的な投稿依頼は実行許可として扱う。「親しい」は `close_friends`、通常ストーリーは `all`。指定範囲と文面を変更しない。「コメント付き」は `--caption` で投稿データへ保存する。画像・動画上への文字描画は行わない。
 2. 依頼ごとにUUIDの操作IDを作る。再開時は同じIDを使う。成功済み・結果不明の操作に新しいIDを作らない。公開要求前の`failed`は、Relayの状態と実装から未公開を確認し、原因を修正できた場合に限り、継続中の明示的な投稿依頼の範囲で新しい試行IDを使える。その操作JSONへ旧操作ID・失敗ジョブID・確認した原因を残し、旧台帳は保持する。キャプション・投稿先・公開範囲・指定された切り出し範囲を変えない。
-3. 同梱 `scripts/story_from_url.py` を実行する。`--download-only`は素材取得のみ、`--preview-only`は取得素材・実ログインアカウント・公開範囲の確認までで、Instagramへのアップロード・公開を行わない。プレビューの確認だけを依頼された場合はここで止める。再エンコード、音声置換、トリミング、分割は行わない。配信元のH.264/AAC（または音声なし）MP4を選択し、無劣化の結合のみ許可する。
+3. 同梱 `scripts/story_from_url.py` を実行する。`--download-only`は素材取得のみ、`--preview-only`は取得素材・実ログインアカウント・公開範囲の確認までで、Instagramへのアップロード・公開を行わない。プレビューの確認だけを依頼された場合はここで止める。配信元のH.264/AAC（または音声なし）MP4を `original.mp4` に保存する。横動画のストーリーは同梱 `story_media.py` で1080×1920へ変換する。元映像を幅1080で中央に置き、背景は元映像の拡大・中央切り抜き・明るさ+0.2・ぼかしsigma17を使う。縦動画・正方形動画は切り出し指定がなければ無変換。音声の置換・自動分割は行わない。
 4. Relayを既存設定・台帳で起動し、同じ操作IDで投稿する。`published`、media ID、ジョブの`audience`を確認する。親しい友達ではRelayが公開応答の`audience: besties`を検証する。`unknown` はInstagram上で確認し、自動再投稿しない。
 
 ```powershell
@@ -96,4 +96,6 @@ Relayの`GET /v1/highlights`で実アカウントと登録先IDを確認し、`P
 
 動画はMP4、H.264、音声はAACまたはなし、1〜60秒、100MiB以下、各辺4096px以下。取得できない形式や制限超過は理由を報告して停止する。ダウンロード成功を投稿成功と報告しない。
 
-ユーザーが明示的に切り出しを指定した場合はその範囲だけを加工し、原本を保存する。ffprobeで実際の長さと形式を検証し、加工内容を操作JSONに記録する。50MiB超の検証済み素材はRelayのファイルパス転送を使う（Playwrightのbuffer転送は50MiBまで）。
+ユーザーが明示的に切り出しを指定した場合は `--clip-start 0 --clip-end 60` のように秒数を指定する。再開時も同じ範囲を指定し、同じ操作IDの範囲を変更しない。指定範囲は元動画内の1〜60秒。原本を保存し、ffprobeで変換後の長さと形式を検証する。23.976fpsなどの端数による60秒超過を避けるため、変換時は切り上げた整数fps（最大60）を使う。変換内容・コマンド・原本と出力のSHA256を操作JSONに保存する。50MiB超の検証済み素材はRelayのファイルパス転送を使う（Playwrightのbuffer転送は50MiBまで）。
+
+縦変換の見た目は [MediaDownloaderTool.py](https://github.com/shirafukayayoi/Shirafuka-Practice/blob/main/Python/MediaDownloaderTool.py) のCPU処理に合わせる。エンコードはこのPCのCPU負荷と投稿上限を考慮してlibx264 veryfast/CRF20を使う。映像の配置・背景効果は同じ。素材検証は `python scripts/test_story_media.py` でも実行できる（Instagramへの通信なし）。

@@ -1,11 +1,14 @@
 """指定URLの素材取得と、同じ操作IDによるストーリー投稿・状態確認。"""
 import argparse
 import json
+import math
 import subprocess
 import sys
 import time
 import urllib.parse
 import uuid
+
+from story_media import prepare_video
 
 from relay_runtime import ROOT, diagnose, ensure_ready, ensure_running, request, accounts, select_account, operation_profile
 HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be",
@@ -57,8 +60,12 @@ def main():
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--highlight", help="投稿後に追加する既存ハイライト名（完全一致）")
     target.add_argument("--highlight-id", help="投稿後に追加する既存ハイライトの数値ID")
+    parser.add_argument("--clip-start", type=float, help="明示指定された切り出し開始秒")
+    parser.add_argument("--clip-end", type=float, help="明示指定された切り出し終了秒")
     parser.add_argument("--caption", default="", help="投稿データのキャプション。画面上の文字ではありません")
     args = parser.parse_args()
+    if any(v is not None and (not math.isfinite(v) or v < 0) for v in (args.clip_start, args.clip_end)):
+        parser.error("切り出し秒数は0以上の有限数で指定してください")
     if args.list_accounts or args.use_account:
         if args.url or args.operation or args.download_only or args.preview_only or args.highlight_only:
             parser.error("アカウント管理と投稿・取得を同じコマンドで実行できません")
@@ -101,6 +108,13 @@ def run(args, directory):
     intent = {"url": args.url, "audience": args.audience, "profile": args.profile, "caption": getattr(args, "caption", "")}
     data = json.loads(ledger.read_text(encoding="utf-8")) if ledger.exists() else {
         **intent, "key": "url-story-" + str(args.operation)}
+    clip = {"start": getattr(args, "clip_start", None), "end": getattr(args, "clip_end", None)}
+    clip = clip if any(v is not None for v in clip.values()) else None
+    if data.get("clip") != clip:
+        if ledger.exists():
+            raise RuntimeError("同じ操作IDの切り出し範囲は変更できません")
+    if clip is not None:
+        data["clip"] = clip
     if any(data.get(k, "" if k == "caption" else None) != v for k, v in intent.items()):
         raise RuntimeError("操作IDを異なるURL・公開範囲・プロファイル・キャプションに再利用できません")
     data.update(intent)
@@ -124,11 +138,16 @@ def run(args, directory):
         ensure_ready(args.profile, start=getattr(args, "start_relay", False))
     file = directory / "video.mp4"
     if not data.get("downloaded"):
-        subprocess.run([sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-playlist",
-                        "--js-runtimes", "node",
-                        "--max-filesize", "100M", "--merge-output-format", "mp4",
-                        "-f", "b[ext=mp4][vcodec~='^(avc1|h264)'][acodec~='^(mp4a|aac)']/bv[ext=mp4][vcodec~='^(avc1|h264)']+ba[ext=m4a][acodec~='^(mp4a|aac)']/b[ext=mp4][vcodec~='^(avc1|h264)'][acodec=none]",
-                        "-o", str(file), "--", args.url], check=True)
+        source = directory / "original.mp4"
+        if not data.get("sourceDownloaded"):
+            subprocess.run([sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-playlist",
+                            "--js-runtimes", "node",
+                            "--max-filesize", "300M", "--merge-output-format", "mp4",
+                            "-f", "b[ext=mp4][vcodec~='^(avc1|h264)'][acodec~='^(mp4a|aac)']/bv[ext=mp4][height<=1080][vcodec~='^(avc1|h264)']+ba[ext=m4a][acodec~='^(mp4a|aac)']/b[ext=mp4][vcodec~='^(avc1|h264)'][acodec=none]",
+                            "-o", str(source), "--", args.url], check=True)
+            data["sourceDownloaded"] = True
+            save(ledger, data)
+        data["transformation"] = prepare_video(source, file, (clip or {}).get("start"), (clip or {}).get("end"))
         data["media"] = inspect(file)
         data["downloaded"] = True
         save(ledger, data)

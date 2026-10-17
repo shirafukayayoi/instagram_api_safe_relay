@@ -96,6 +96,15 @@ class StoryTests(unittest.TestCase):
                 api.assert_not_called()
                 ready.assert_not_called()
 
+    def test_changed_clip_never_contacts_relay(self):
+        self.data['clip'] = {'start': 0.0, 'end': 60.0}
+        self.args.clip_start, self.args.clip_end = 0.0, 30.0
+        with patch.object(story, 'api') as api, patch.object(story, 'ensure_ready') as ready:
+            with self.assertRaises(RuntimeError):
+                self.run_story()
+            api.assert_not_called()
+            ready.assert_not_called()
+
     def test_missing_relay_fails_before_download_or_publish(self):
         self.data["downloaded"] = False
         with patch.object(story, "ensure_ready", side_effect=RuntimeError("接続できません")), \
