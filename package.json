@@ -15,7 +15,8 @@
 		"type-check": "pnpm -r run type-check",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
-		"check": "biome check ."
+		"check": "biome check .",
+		"accounts:register": "pnpm --filter instagram-api-safe-relay exec tsx ../../scripts/register-http-account.ts"
 	},
 	"keywords": [
 		"instagram",

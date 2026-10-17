@@ -32,6 +32,40 @@ class StoryTests(unittest.TestCase):
         story.save(self.directory / "operation.json", self.data)
         story.run(self.args, self.directory)
 
+    def test_account_selection_reads_and_switches_without_publication(self):
+        listing = {"accounts": [{"profile": "one", "state": "ready", "account": {"id": "123", "username": "owner"}}]}
+        with patch.object(relay_runtime, "accounts", return_value=listing), patch.object(relay_runtime, "request", return_value={"data": {"profile": "one"}}) as request:
+            self.assertEqual(relay_runtime.select_account("@owner"), {"profile": "one"})
+            request.assert_called_once_with("v1/accounts/select", payload={"profile": "one", "expectedAccountId": "123"})
+
+    def test_unknown_or_ambiguous_account_never_switches(self):
+        entries = [{"profile": "one", "account": {"id": "123", "username": "same"}},
+                   {"profile": "two", "account": {"id": "456", "username": "same"}}]
+        with patch.object(relay_runtime, "accounts", return_value={"accounts": entries}), patch.object(relay_runtime, "request") as request:
+            for target in ("@same", "missing"):
+                with self.assertRaises(RuntimeError):
+                    relay_runtime.select_account(target)
+            request.assert_not_called()
+
+    def test_existing_operation_keeps_original_profile_after_switch(self):
+        story.save(self.directory / "operation.json", self.data)
+        with patch.object(relay_runtime, "accounts") as accounts:
+            self.assertEqual(relay_runtime.operation_profile(None, self.directory), "account1")
+            accounts.assert_not_called()
+
+    def test_new_operation_uses_selected_account_and_rejects_missing_selection(self):
+        with patch.object(relay_runtime, "accounts", return_value={"selected": {"profile": "two"}}):
+            self.assertEqual(relay_runtime.operation_profile(None, self.directory), "two")
+            self.assertEqual(relay_runtime.operation_profile("explicit", self.directory), "explicit")
+        with patch.object(relay_runtime, "accounts", return_value={"selected": None}):
+            with self.assertRaises(RuntimeError):
+                relay_runtime.operation_profile(None, self.directory)
+
+    def test_explicit_download_profile_needs_no_account_api(self):
+        with patch.object(relay_runtime, "accounts") as accounts:
+            self.assertEqual(relay_runtime.operation_profile("one", self.directory, offline=True), "one")
+            accounts.assert_not_called()
+
     def test_unknown_job_resume_queries_without_material_or_session(self):
         self.data.update(job=JOB, downloaded=False)
         with patch.object(story, "api", return_value={"data": {"state": "unknown"}}) as api, \

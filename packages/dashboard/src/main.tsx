@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { type SafeTrace, parseSseChunk } from "./events";
+import { type AccountSelection, AccountSwitcher } from "./account-switcher";
+import { parseSseChunk, type SafeTrace } from "./events";
 import { StoryComposer } from "./story-composer";
 import "./style.css";
 
@@ -11,6 +12,7 @@ type ProfileStatus = {
 };
 
 const App = () => {
+	const [selection, setSelection] = useState<AccountSelection | null>(null);
 	const [token, setToken] = useState(() => sessionStorage.getItem("relayToken") ?? "");
 	const [profiles, setProfiles] = useState<ProfileStatus[]>([]);
 	const [events, setEvents] = useState<SafeTrace[]>([]);
@@ -63,7 +65,9 @@ const App = () => {
 			<section className="auth">
 				<label htmlFor="token">Bearer token</label>
 				<input id="token" type="password" value={token} onChange={(event) => setToken(event.target.value)} />
-				<button type="button" onClick={() => void connect()}>接続</button>
+				<button type="button" onClick={() => void connect()}>
+					接続
+				</button>
 				<p>{message}</p>
 			</section>
 
@@ -74,13 +78,21 @@ const App = () => {
 						<article key={profile.name}>
 							<strong>{profile.name}</strong>
 							<span data-state={profile.state}>{profile.state}</span>
-							<ul>{Object.entries(profile.catalog).map(([name, state]) => <li key={name}>{name}: {state}</li>)}</ul>
+							<ul>
+								{Object.entries(profile.catalog).map(([name, state]) => (
+									<li key={name}>
+										{name}: {state}
+									</li>
+								))}
+							</ul>
 						</article>
 					))}
 				</div>
 			</section>
 
-			<StoryComposer key={token} token={token} profiles={profiles} />
+			<AccountSwitcher key={`accounts-${token}`} token={token} onSelection={setSelection} />
+
+			<StoryComposer key={token} token={token} selection={selection} />
 
 			<section>
 				<h2>Redacted traces</h2>

@@ -1,13 +1,14 @@
 import type { StoryJob, StoryPreview, StoryPreviewStatus } from "instagram-api-safe-contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AccountSelection } from "./account-switcher";
 import { clearPendingStory, type PendingStory, readPendingStory, savePendingStory } from "./story-pending";
 
-type Props = { token: string; profiles: { name: string; state: string }[] };
+type Props = { token: string; selection: AccountSelection | null };
 type Draft = { profile: string; filePath: string; audience: "all" | "close_friends"; caption: string };
 const audienceLabel = (value: Draft["audience"]) => (value === "close_friends" ? "親しい友達" : "通常公開");
 const terminal = (job: StoryJob | null) => job && ["published", "failed", "unknown"].includes(job.state);
 
-export const StoryComposer = ({ token, profiles }: Props) => {
+export const StoryComposer = ({ token, selection }: Props) => {
 	const [initial] = useState(readPendingStory);
 	const [pending, setPending] = useState(initial.pending);
 	const pendingRef = useRef(pending);
@@ -45,22 +46,33 @@ export const StoryComposer = ({ token, profiles }: Props) => {
 		[token],
 	);
 
-	const resetPreview = () => {
+	const resetPreview = useCallback(() => {
 		setPreview(null);
 		previewRef.current = null;
 		setMediaUrl("");
 		setMediaReady(false);
 		setConfirmed(false);
 		confirmedRef.current = false;
-	};
-	const changeDraft = (patch: Partial<Draft>) => {
-		if (busyRef.current || pendingRef.current || initial.error) return;
-		const old = previewRef.current;
-		resetPreview();
-		if (old) void request(old.profile, `/v1/story-previews/${old.id}`, "DELETE").catch(() => undefined);
-		setDraft((current) => ({ ...current, ...patch }));
-		setMessage("変更した内容でプレビューを作り、再確認してください。");
-	};
+	}, []);
+	const changeDraft = useCallback(
+		(patch: Partial<Draft>) => {
+			if (busyRef.current || pendingRef.current || initial.error) return;
+			const old = previewRef.current;
+			resetPreview();
+			if (old) void request(old.profile, `/v1/story-previews/${old.id}`, "DELETE").catch(() => undefined);
+			setDraft((current) => ({ ...current, ...patch }));
+			setMessage("変更した内容でプレビューを作り、再確認してください。");
+		},
+		[initial.error, request, resetPreview],
+	);
+	useEffect(() => {
+		if (
+			selection &&
+			!blocked &&
+			(selection.profile !== draft.profile || (preview && preview.account.id !== selection.account.id))
+		)
+			changeDraft({ profile: selection.profile });
+	}, [selection, draft.profile, blocked, changeDraft, preview]);
 	useEffect(
 		() => () => {
 			if (mediaUrl) URL.revokeObjectURL(mediaUrl);
@@ -105,7 +117,15 @@ export const StoryComposer = ({ token, profiles }: Props) => {
 	}, [pending, token, settled, refresh]);
 
 	const prepare = async () => {
-		if (busyRef.current || pendingRef.current || initial.error || !draft.profile || !token) return;
+		if (
+			busyRef.current ||
+			pendingRef.current ||
+			initial.error ||
+			!draft.profile ||
+			!token ||
+			draft.profile !== selection?.profile
+		)
+			return;
 		busyRef.current = true;
 		setBusy(true);
 		const old = previewRef.current;
@@ -141,6 +161,8 @@ export const StoryComposer = ({ token, profiles }: Props) => {
 			pendingRef.current ||
 			initial.error ||
 			!preview ||
+			preview.profile !== selection?.profile ||
+			preview.account.id !== selection?.account.id ||
 			previewRef.current?.id !== preview.id ||
 			!confirmedRef.current ||
 			!mediaReady
@@ -203,19 +225,9 @@ export const StoryComposer = ({ token, profiles }: Props) => {
 			<h2>ストーリーズ投稿</h2>
 			<p>プレビューで実際の投稿先を確認し、確認後に公開します。</p>
 			<fieldset disabled={blocked}>
-				<label htmlFor="story-profile">接続プロファイル（設定ラベル）</label>
-				<select
-					id="story-profile"
-					value={draft.profile}
-					onChange={(event) => changeDraft({ profile: event.target.value })}
-				>
-					<option value="">選択してください</option>
-					{profiles.map((profile) => (
-						<option key={profile.name} value={profile.name}>
-							{profile.name} ({profile.state})
-						</option>
-					))}
-				</select>
+				<p>
+					投稿先: <strong>{selection ? `@${selection.account.username}` : "上でアカウントを選択してください"}</strong>
+				</p>
 				<label htmlFor="story-file">Relay側の素材の絶対パス</label>
 				<input
 					id="story-file"
@@ -238,7 +250,11 @@ export const StoryComposer = ({ token, profiles }: Props) => {
 					value={draft.caption}
 					onChange={(event) => changeDraft({ caption: event.target.value })}
 				/>
-				<button type="button" disabled={!token || !draft.profile || !draft.filePath} onClick={() => void prepare()}>
+				<button
+					type="button"
+					disabled={!token || !draft.profile || !draft.filePath || draft.profile !== selection?.profile}
+					onClick={() => void prepare()}
+				>
 					プレビューを作成
 				</button>
 			</fieldset>
@@ -301,7 +317,9 @@ export const StoryComposer = ({ token, profiles }: Props) => {
 							<button
 								type="button"
 								className="publish"
-								disabled={!confirmed || !mediaReady || busy || Boolean(initial.error)}
+								disabled={
+									!confirmed || !mediaReady || busy || Boolean(initial.error) || preview.profile !== selection?.profile
+								}
 								onClick={() => void publish()}
 							>
 								確認して公開

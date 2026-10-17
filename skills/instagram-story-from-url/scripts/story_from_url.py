@@ -7,7 +7,7 @@ import time
 import urllib.parse
 import uuid
 
-from relay_runtime import ROOT, diagnose, ensure_ready, ensure_running, request
+from relay_runtime import ROOT, diagnose, ensure_ready, ensure_running, request, accounts, select_account, operation_profile
 HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be",
          "tiktok.com", "www.tiktok.com", "vt.tiktok.com", "vm.tiktok.com"}
 
@@ -45,7 +45,10 @@ def main():
     parser.add_argument("--audience", choices=["all", "close_friends"])
     parser.add_argument("--profile")
     parser.add_argument("--operation", type=uuid.UUID)
-    parser.add_argument("--check", action="store_true", help="投稿せず依存関係・設定・ログイン状態を診断")
+    management = parser.add_mutually_exclusive_group()
+    management.add_argument("--list-accounts", action="store_true", help="登録アカウントと選択中の投稿先を一覧表示")
+    management.add_argument("--use-account", help="プロファイル名または@ユーザー名で次の投稿先を選択")
+    management.add_argument("--check", action="store_true", help="投稿せず依存関係・設定・ログイン状態を診断")
     parser.add_argument("--start-relay", action="store_true", help="停止中のRelayを既存設定・台帳で起動")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--download-only", action="store_true")
@@ -56,14 +59,20 @@ def main():
     target.add_argument("--highlight-id", help="投稿後に追加する既存ハイライトの数値ID")
     parser.add_argument("--caption", default="", help="投稿データのキャプション。画面上の文字ではありません")
     args = parser.parse_args()
+    if args.list_accounts or args.use_account:
+        if args.url or args.operation or args.download_only or args.preview_only or args.highlight_only:
+            parser.error("アカウント管理と投稿・取得を同じコマンドで実行できません")
+        result = select_account(args.use_account, start=args.start_relay) if args.use_account else accounts(start=args.start_relay)
+        print(json.dumps(result, ensure_ascii=False))
+        return
     if args.check:
         result = diagnose(args.profile, start=args.start_relay)
         print(json.dumps(result, ensure_ascii=False))
         if not result["ready"]:
             sys.exit(1)
         return
-    if not all((args.url, args.audience, args.profile, args.operation)):
-        parser.error("投稿・取得にはURL、--audience、--profile、--operationが必要です")
+    if not all((args.url, args.audience, args.operation)):
+        parser.error("投稿・取得にはURL、--audience、--operationが必要です")
     if len(args.caption.encode("utf-16-le")) // 2 > 2200:
         parser.error("captionはUTF-16で2200文字以内にしてください")
     if args.highlight_only and not (args.highlight or args.highlight_id):
@@ -74,6 +83,7 @@ def main():
     if url.scheme != "https" or url.hostname not in HOSTS or url.username or url.password or url.port:
         parser.error("YouTube/TikTokのHTTPS URLを指定してください")
     directory = ROOT / str(args.operation)
+    args.profile = operation_profile(args.profile, directory, start=args.start_relay, offline=args.download_only)
     directory.mkdir(parents=True, exist_ok=True)
     lock = directory / ".lock"
     try:

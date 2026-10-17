@@ -38,3 +38,9 @@ button:disabled { opacity: 0.45; cursor: default; }
 .publish { background: #c63956; border-color: #c63956; }
 .secondary { background: #111722; border-color: #30394a; margin-left: 12px; }
 .story-result p { overflow-wrap: anywhere; }
+
+.account-switcher { margin-top: 28px; padding: 20px; border: 1px solid #30394a; border-radius: 12px; }
+.account-switcher h2 { margin-top: 0; }
+.account-controls { display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+.account-controls select { flex: 1; min-width: 180px; }
+.account-note { color: #9ba7bc; font-size: 14px; }

@@ -87,6 +87,12 @@ def configuration(profile):
     profiles = config.get("profiles", [])
     if profile is None and len(profiles) == 1:
         profile = profiles[0]["name"]
+    if profile is None and len(profiles) > 1:
+        selected_file = Path(config.get("accountSelectionFile", "../../work/skill-relay/selected-account.json"))
+        if not selected_file.is_absolute():
+            selected_file = REPOSITORY / "packages" / "server" / selected_file
+        if selected_file.exists():
+            profile = json.loads(selected_file.read_text(encoding="utf-8"))["profile"]
     if not any(entry.get("name") == profile for entry in profiles):
         raise RuntimeError("設定済みのプロファイルを--profileで指定してください")
     return profile
@@ -159,8 +165,58 @@ def diagnose(profile=None, start=False):
         if not all(check["ok"] for check in checks):
             raise RuntimeError("不足している依存ツールを導入してください")
         token()
+        explicit = profile is not None
         result.update(ensure_ready(profile, start=start))
+        if not explicit:
+            selected = request("v1/accounts")["data"].get("selected")
+            if not selected or selected["profile"] != result["profile"]:
+                raise RuntimeError("保存した投稿先を確認できません。--use-accountで選び直してください")
+            result["account"] = selected["account"]
         result["ready"] = True
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         result["error"] = str(error)
     return result
+
+
+def accounts(start=False):
+    """認証値を含まない登録一覧と現在の選択を取得する。"""
+    ensure_running(start=start)
+    return request("v1/accounts")["data"]
+
+
+def select_account(target, start=False):
+    listing = accounts(start=start)
+    name = target.removeprefix("@")
+    matches = []
+    for entry in listing["accounts"]:
+        account = entry.get("account") or {}
+        if (not target.startswith("@") and entry["profile"] == target) or account.get("username") == name:
+            matches.append(entry)
+    if len(matches) != 1:
+        raise RuntimeError("アカウントを一意に指定できません。--list-accountsで確認し、プロファイル名または@ユーザー名を指定してください")
+    selected = matches[0]
+    if start:
+        ensure_ready(selected["profile"], start=True)
+    payload = {"profile": selected["profile"]}
+    if selected.get("account"):
+        payload["expectedAccountId"] = selected["account"]["id"]
+    return request("v1/accounts/select", payload=payload)["data"]
+
+
+def operation_profile(explicit, directory, start=False, offline=False):
+    """既存操作は保存済み投稿先、新規操作は選択した投稿先に固定する。"""
+    if explicit:
+        return explicit
+    ledger = directory / "operation.json"
+    if ledger.exists():
+        data = json.loads(ledger.read_text(encoding="utf-8"))
+        profile = data.get("profile")
+        if not isinstance(profile, str) or not profile:
+            raise RuntimeError("既存操作の投稿先を確認できません。別アカウントで代用しません")
+        return profile
+    if offline:
+        return configuration(None)
+    selected = accounts(start=start).get("selected")
+    if not selected:
+        raise RuntimeError("投稿先が未選択です。--use-accountで切り替えるか--profileを指定してください")
+    return selected["profile"]

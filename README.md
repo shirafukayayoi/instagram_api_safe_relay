@@ -41,6 +41,10 @@ pnpm dev:relay
 
 Relayはセッションを定期確認し、`ready`、`login_required`、`two_factor_required`、`challenge_required`、`unknown`を`/profiles`へ反映します。ログイン、2FA、challengeはブラウザ上で手動完了してください。ページのclose/crashやブラウザ切断時は、ページ再読込、同じcontextで新規page、context再起動の順に自動復旧します。確認間隔と再試行間隔は`sessionCheckIntervalSeconds`、`recoveryRetrySeconds`で変更できます。
 
+## アカウント切り替え
+
+DashboardまたはURL投稿Skillから、実ログインアカウントを照合して次の投稿先を選択できます。選択は再起動後も保持し、処理中・再開中の投稿は元のアカウントに固定します。[一覧・切り替え・別アカウントの登録](docs/accounts.md)を参照してください。
+
 ## HTTP API
 
 ```powershell

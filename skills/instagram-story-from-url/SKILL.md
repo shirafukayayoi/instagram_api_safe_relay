@@ -35,6 +35,12 @@ python '<skill-dir>/scripts/story_from_url.py' --check --start-relay --profile a
 
 依存関係やビルドが不足する場合はRelayのリポジトリで`pnpm install --frozen-lockfile`、`pnpm build`を実行する。Node.js 24・pnpm 11.5.0と、リポジトリのlockfileを使用する。GitHubから更新する際は未コミット変更を保全する。
 
+## アカウント切り替え
+
+`--list-accounts --start-relay`で登録済みアカウントと現在の選択を表示する。`--use-account '@username'`または`--use-account account2`で実ログイン先を照合して次の投稿先を保存する。いずれもInstagramへのアップロード・公開は行わない。新規操作は`--profile`省略時に選択済みの投稿先を使い、明示した`--profile`はその操作で優先する。既存の操作IDの再開では操作JSONの元のプロファイルを優先し、現在の選択で置き換えない。アカウント管理とURL投稿は別コマンドで行う。
+
+別アカウントは専用プロファイルへ手動ログインし、別の`private_sessions`ファイルへ移行してから、Relayリポジトリの`pnpm accounts:register --name account2 --session-file private_sessions/account2.json`で照合・登録する。既存アカウントを上書きしない。追加後は処理中の投稿がないことを確認してRelayを正常終了・再起動する。詳細は`docs/accounts.md`。登録・切り替えも通常運用ではブラウザーを起動しない。
+
 ## 手順
 
 1. ユーザーが指定したURL、投稿先、公開範囲、任意のキャプションを確認する。明示的な投稿依頼は実行許可として扱う。「親しい」は `close_friends`、通常ストーリーは `all`。指定範囲と文面を変更しない。「コメント付き」は `--caption` で投稿データへ保存する。画像・動画上への文字描画は行わない。
