@@ -154,7 +154,7 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		expect(body.get("__comet_req")).toBe("7");
 	});
 	it("素材を固定アップロード先へ送り、既存offsetがあれば停止する", async () => {
-		const f = await fixture([ok({ offset: 0 }), ok({}), ok({})]);
+		const f = await fixture([ok({ offset: 0 }), ok({}), ok({ upload_id: "1234567890123" })]);
 		const client = await f.open();
 		await client.uploadVideo("1234567890123", new Uint8Array([1, 2]), 720, 1280, 2, signal());
 		await client.uploadPhoto("1234567890123", new Uint8Array([3]), 720, 1280, "image/jpeg", signal());

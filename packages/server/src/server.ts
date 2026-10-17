@@ -8,7 +8,6 @@ import { DmStore } from "./direct/store.js";
 import { HighlightService } from "./highlights/service.js";
 import { HighlightStore } from "./highlights/store.js";
 import { HttpProfileManager } from "./http/profile-manager.js";
-import { ProfileManager } from "./profile-manager.js";
 import { StoryService } from "./stories/service.js";
 import { StoryStore } from "./stories/store.js";
 import { MentionService } from "./story-mentions/service.js";
@@ -28,19 +27,22 @@ const logger = pino({
 });
 
 const profiles: RelayProfile[] = [];
-const managers = settings.profiles.map((profileSettings) => {
-	const profile: RelayProfile = { name: profileSettings.name, state: "starting" };
-	profiles.push(profile);
-	if (profileSettings.browser.type === "http")
-		return new HttpProfileManager(profile, profileSettings.browser.sessionFile, settings.stories.ffmpegPath);
-	return new ProfileManager({
-		settings: profileSettings,
-		profile,
-		logger,
-		sessionCheckIntervalMs: settings.sessionCheckIntervalSeconds * 1_000,
-		recoveryRetryMs: settings.recoveryRetrySeconds * 1_000,
-	});
-});
+const managers = await Promise.all(
+	settings.profiles.map(async (profileSettings) => {
+		const profile: RelayProfile = { name: profileSettings.name, state: "starting" };
+		profiles.push(profile);
+		if (profileSettings.browser.type === "http")
+			return new HttpProfileManager(profile, profileSettings.browser.sessionFile, settings.stories.ffmpegPath);
+		const { ProfileManager } = await import("./profile-manager.js");
+		return new ProfileManager({
+			settings: profileSettings,
+			profile,
+			logger,
+			sessionCheckIntervalMs: settings.sessionCheckIntervalSeconds * 1_000,
+			recoveryRetryMs: settings.recoveryRetrySeconds * 1_000,
+		});
+	}),
+);
 
 let stories: StoryService | undefined;
 if (settings.stories.enabled) {

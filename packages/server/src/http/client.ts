@@ -63,6 +63,7 @@ export class InstagramHttpClient {
 	readonly #file: string;
 	readonly #options: ClientOptions;
 	#closed = false;
+	#wwwClaim = "0";
 	#tokens: { lsd: string; dtsg: string; av: string } | undefined;
 	private constructor(session: Session, file: string, options: ClientOptions) {
 		this.#session = session;
@@ -122,6 +123,7 @@ export class InstagramHttpClient {
 				.join("; "),
 			"X-CSRFToken": this.#cookie("csrftoken"),
 			"X-IG-App-ID": "936619743392459",
+			"X-IG-WWW-Claim": this.#wwwClaim,
 			"X-Requested-With": "XMLHttpRequest",
 			Origin: "https://www.instagram.com",
 			Referer: "https://www.instagram.com/",
@@ -186,6 +188,8 @@ export class InstagramHttpClient {
 		}
 	}
 	async #refreshCookies(headers: Headers) {
+		const claim = headers.get("x-ig-set-www-claim");
+		if (claim && safeValue.safeParse(claim).success) this.#wwwClaim = claim;
 		let changed = false;
 		for (const value of headers.getSetCookie()) {
 			const parts = value.split(";");
@@ -230,8 +234,10 @@ export class InstagramHttpClient {
 		// Web用の固定読み取りAPI。編集・保存の要求は送らない。
 		const data = await this.#json("www.instagram.com", "/api/v1/accounts/edit/web_form_data/", signal);
 		const username = object(data.form_data).username;
-		if (username !== this.#session.account.username)
+		if (username !== this.#session.account.username) {
+			this.#options.onSessionError?.("session_not_ready");
 			throw new StoryError("ACCOUNT_CHANGED", "保存した投稿先と実ログインアカウントが一致しません");
+		}
 		return { ...this.#session.account };
 	}
 	async #webTokens(signal: AbortSignal) {
@@ -374,7 +380,7 @@ export class InstagramHttpClient {
 			`/api/v1/highlights/highlight:${id}/edit_reel/`,
 			signal,
 			new URLSearchParams({
-				source: "self_profile",
+				source: "story_viewer_profile",
 				added_media_ids: JSON.stringify([`${mediaId}_${this.#session.account.id}`]),
 				removed_media_ids: "[]",
 			}),
@@ -383,7 +389,7 @@ export class InstagramHttpClient {
 	async uploadPhoto(id: string, bytes: Uint8Array, width: number, height: number, mime: string, signal: AbortSignal) {
 		validateId(id);
 		const entity = `story_${id}`;
-		await this.#json("i.instagram.com", `/rupload_igphoto/${entity}`, signal, bytes, {
+		const response = await this.#json("i.instagram.com", `/rupload_igphoto/${entity}`, signal, bytes, {
 			"Content-Type": "application/octet-stream",
 			"X-Entity-Type": mime,
 			"X-Entity-Name": entity,
@@ -396,6 +402,8 @@ export class InstagramHttpClient {
 				upload_media_height: String(height),
 			}),
 		});
+		if (numericId(response.upload_id) !== id)
+			throw new StoryError("UPLOAD_FAILED", "アップロードした画像のIDが一致しません");
 	}
 	async uploadVideo(
 		id: string,
