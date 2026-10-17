@@ -1,7 +1,14 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
   "files": {
-    "includes": ["**", "!work", "!outputs", "!**/dist", "!**/node_modules", "!**/.wxt"]
+    "includes": [
+      "**",
+      "!work",
+      "!outputs",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/.wxt"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -19,5 +26,10 @@
       "quoteStyle": "double",
       "semicolons": "always"
     }
+  },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
   }
 }

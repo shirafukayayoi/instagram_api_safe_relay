@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { addHighlightStorySchema, type HighlightJob } from "instagram-api-safe-contracts";
+import { mediaReady, withMediaSession } from "../media-session.js";
+import { StoryError } from "../stories/errors.js";
+import type { StoryService } from "../stories/service.js";
 import type { RelayProfile } from "../types.js";
 import { SerialQueue } from "../utils/queue.js";
 import type { Settings } from "../utils/settings.js";
-import { StoryError } from "../stories/errors.js";
-import type { StoryService } from "../stories/service.js";
-import { createHighlightBrowser } from "./browser.js";
+import type { createHighlightBrowser } from "./browser.js";
 import type { HighlightRecord, HighlightStore } from "./store.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -32,32 +33,34 @@ export class HighlightService {
 		this.#options.store.assertHealthy();
 		const profile = this.#options.profiles.find((item) => item.name === name);
 		if (!profile) throw new StoryError("UNKNOWN_PROFILE", "プロファイルが見つかりません");
-		if (profile.state !== "ready" || !profile.client || !profile.runExclusive)
-			throw new StoryError("SESSION_NOT_READY", "ブラウザの準備ができていません");
+		if (!mediaReady(profile)) throw new StoryError("SESSION_NOT_READY", "ブラウザの準備ができていません");
 		return profile;
 	}
 	async #browser<T>(
 		profile: RelayProfile,
 		action: (browser: Awaited<ReturnType<typeof createHighlightBrowser>>) => Promise<T>,
 	): Promise<T> {
-		if (!profile.runExclusive) throw new StoryError("SESSION_NOT_READY", "プロファイルの実行キューがありません");
-		return profile.runExclusive(async (client) => {
-			const controller = new AbortController();
-			this.#controllers.add(controller);
-			const timer = setTimeout(() => controller.abort(), this.#options.settings.operationTimeoutMs);
-			let browser: Awaited<ReturnType<typeof createHighlightBrowser>> | undefined;
-			try {
-				if (this.#closing || (await client.getSessionStatus()).state !== "ready")
-					throw new StoryError("SESSION_NOT_READY", "Instagramへのログインが必要です");
-				browser = await (this.#options.browser ?? createHighlightBrowser)(client.page, controller.signal);
-				return await action(browser);
-			} finally {
-				clearTimeout(timer);
-				controller.abort();
-				await browser?.close();
-				this.#controllers.delete(controller);
-			}
-		});
+		return withMediaSession(
+			profile,
+			async (session) => {
+				const controller = new AbortController();
+				this.#controllers.add(controller);
+				const timer = setTimeout(() => controller.abort(), this.#options.settings.operationTimeoutMs);
+				let browser: Awaited<ReturnType<typeof createHighlightBrowser>> | undefined;
+				try {
+					if (this.#closing || (await session.getSessionStatus()).state !== "ready")
+						throw new StoryError("SESSION_NOT_READY", "Instagramへのログインが必要です");
+					browser = await session.createHighlights(controller.signal);
+					return await action(browser);
+				} finally {
+					clearTimeout(timer);
+					controller.abort();
+					await browser?.close();
+					this.#controllers.delete(controller);
+				}
+			},
+			{ highlights: this.#options.browser },
+		);
 	}
 	list(name: string) {
 		return this.#browser(this.#profile(name), (browser) => browser.list());

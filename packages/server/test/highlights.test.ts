@@ -1,14 +1,14 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import type { StoryJob } from "instagram-api-safe-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
-import { HighlightStore } from "../src/highlights/store.js";
 import { HighlightService } from "../src/highlights/service.js";
+import { HighlightStore } from "../src/highlights/store.js";
 import { StoryError } from "../src/stories/errors.js";
 import type { RelayProfile } from "../src/types.js";
-import type { StoryJob } from "instagram-api-safe-contracts";
 import { SerialQueue } from "../src/utils/queue.js";
 
 const directories: string[] = [];
@@ -86,6 +86,27 @@ const fixture = async (mode: "added" | "present" | "before-failure" | "after-fai
 };
 
 describe("ハイライト登録", () => {
+	it("ブラウザーなしでも限定公開・台帳・二重登録防止を維持する", async () => {
+		const f = await fixture();
+		delete f.profile.client;
+		delete f.profile.runExclusive;
+		const queue = new SerialQueue();
+		f.profile.runMediaExclusive = (task) =>
+			queue.run(() =>
+				task({
+					getSessionStatus: async () => ({ state: "ready" }),
+					createPublisher: async () => {
+						throw new Error("対象外");
+					},
+					createHighlights: async () => f.browser,
+				}),
+			);
+		const job = await f.service.create("one", "456", "http", f.request);
+		expect(await f.finish(job.id)).toMatchObject({ state: "completed", audience: "close_friends" });
+		expect((await f.service.create("one", "456", "http-repeat", f.request)).id).toBe(job.id);
+		expect(f.browser.add).toHaveBeenCalledTimes(1);
+	});
+
 	it("公開済みの投稿だけを追加し、登録前の台帳と限定公開情報を維持する", async () => {
 		const f = await fixture();
 		const job = await f.service.create("one", "456", "first", f.request);

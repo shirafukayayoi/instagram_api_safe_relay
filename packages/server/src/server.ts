@@ -3,17 +3,18 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import pino from "pino";
 import { createApp } from "./app.js";
+import { DmService } from "./direct/service.js";
+import { DmStore } from "./direct/store.js";
+import { HighlightService } from "./highlights/service.js";
+import { HighlightStore } from "./highlights/store.js";
+import { HttpProfileManager } from "./http/profile-manager.js";
 import { ProfileManager } from "./profile-manager.js";
+import { StoryService } from "./stories/service.js";
+import { StoryStore } from "./stories/store.js";
+import { MentionService } from "./story-mentions/service.js";
+import { MentionStore } from "./story-mentions/store.js";
 import type { RelayProfile } from "./types.js";
 import { loadSettings } from "./utils/settings.js";
-import { StoryStore } from "./stories/store.js";
-import { StoryService } from "./stories/service.js";
-import { DmStore } from "./direct/store.js";
-import { DmService } from "./direct/service.js";
-import { MentionStore } from "./story-mentions/store.js";
-import { MentionService } from "./story-mentions/service.js";
-import { HighlightStore } from "./highlights/store.js";
-import { HighlightService } from "./highlights/service.js";
 
 const settingsPath = process.env.INSTAGRAM_RELAY_SETTINGS ?? "./../../settings.json";
 const token = process.env.INSTAGRAM_RELAY_API_TOKEN;
@@ -30,6 +31,8 @@ const profiles: RelayProfile[] = [];
 const managers = settings.profiles.map((profileSettings) => {
 	const profile: RelayProfile = { name: profileSettings.name, state: "starting" };
 	profiles.push(profile);
+	if (profileSettings.browser.type === "http")
+		return new HttpProfileManager(profile, profileSettings.browser.sessionFile, settings.stories.ffmpegPath);
 	return new ProfileManager({
 		settings: profileSettings,
 		profile,

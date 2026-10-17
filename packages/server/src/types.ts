@@ -12,6 +12,7 @@ export type ProfileState =
 	| "browser_disconnected";
 
 export type RelayProfile = {
+	runMediaExclusive?: <T>(task: (session: import("./media-session.js").MediaSession) => Promise<T>) => Promise<T>;
 	name: string;
 	client?: InstagramApiProfileClient;
 	state: ProfileState;

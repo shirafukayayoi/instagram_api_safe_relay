@@ -9,10 +9,11 @@ import type {
 	StoryPreviewStatus,
 } from "instagram-api-safe-contracts";
 import { confirmStoryInputSchema, createStoryInputSchema } from "instagram-api-safe-contracts";
+import { mediaReady, withMediaSession } from "../media-session.js";
 import type { RelayProfile } from "../types.js";
 import { SerialQueue } from "../utils/queue.js";
 import type { Settings } from "../utils/settings.js";
-import { createBrowserStoryPublisher } from "./browser.js";
+import type { createBrowserStoryPublisher } from "./browser.js";
 import { StoryError } from "./errors.js";
 import { prepareMedia, type StoryMedia } from "./media.js";
 import type { StoryRecord, StoryStore } from "./store.js";
@@ -76,8 +77,7 @@ export class StoryService {
 				if (Date.parse(entry.view.expiresAt) <= Date.now()) await this.#discard(id);
 			}
 			if (this.#previews.size >= 20) throw new StoryError("INVALID_INPUT", "不要なプレビューをキャンセルしてください");
-			if (profile.state !== "ready" || !profile.client || !profile.runExclusive)
-				throw new StoryError("SESSION_NOT_READY", "ブラウザセッションの準備ができていません");
+			if (!mediaReady(profile)) throw new StoryError("SESSION_NOT_READY", "ブラウザセッションの準備ができていません");
 			const id = randomUUID();
 			const media = await (this.#options.prepare ?? prepareMedia)(
 				parsed.data.filePath,
@@ -87,25 +87,29 @@ export class StoryService {
 				this.#options.settings.ffprobePath,
 			);
 			try {
-				const account = await profile.runExclusive(async (client) => {
-					const controller = new AbortController();
-					this.#controllers.add(controller);
-					const timer = setTimeout(() => controller.abort(), this.#options.settings.operationTimeoutMs);
-					let publisher: Awaited<ReturnType<typeof createBrowserStoryPublisher>> | undefined;
-					try {
-						if (this.#closing || (await client.getSessionStatus()).state !== "ready")
-							throw new StoryError("SESSION_NOT_READY", "実ログインアカウントを確認できません");
-						publisher = await (this.#options.publisher ?? createBrowserStoryPublisher)(client.page, controller.signal);
-						const current = await publisher.getAccount();
-						if (controller.signal.aborted) throw new StoryError("INTERRUPTED", "プレビューを中断しました");
-						return current;
-					} finally {
-						clearTimeout(timer);
-						controller.abort();
-						await publisher?.close().catch(() => undefined);
-						this.#controllers.delete(controller);
-					}
-				});
+				const account = await withMediaSession(
+					profile,
+					async (session) => {
+						const controller = new AbortController();
+						this.#controllers.add(controller);
+						const timer = setTimeout(() => controller.abort(), this.#options.settings.operationTimeoutMs);
+						let publisher: Awaited<ReturnType<typeof createBrowserStoryPublisher>> | undefined;
+						try {
+							if (this.#closing || (await session.getSessionStatus()).state !== "ready")
+								throw new StoryError("SESSION_NOT_READY", "実ログインアカウントを確認できません");
+							publisher = await session.createPublisher(controller.signal);
+							const current = await publisher.getAccount();
+							if (controller.signal.aborted) throw new StoryError("INTERRUPTED", "プレビューを中断しました");
+							return current;
+						} finally {
+							clearTimeout(timer);
+							controller.abort();
+							await publisher?.close().catch(() => undefined);
+							this.#controllers.delete(controller);
+						}
+					},
+					{ publisher: this.#options.publisher },
+				);
 				const { assetPath: _assetPath, ...metadata } = media;
 				const view: StoryPreview = {
 					id,
@@ -239,8 +243,7 @@ export class StoryService {
 					throw new StoryError("IDEMPOTENCY_CONFLICT", "同じキーを異なる要求に再利用できません");
 				return previous.job;
 			}
-			if (profile.state !== "ready" || !profile.client || !profile.runExclusive)
-				throw new StoryError("SESSION_NOT_READY", "ブラウザセッションの準備ができていません");
+			if (!mediaReady(profile)) throw new StoryError("SESSION_NOT_READY", "ブラウザセッションの準備ができていません");
 			const id = randomUUID();
 			const media = await (this.#options.prepare ?? prepareMedia)(
 				parsed.data.filePath,
@@ -297,45 +300,48 @@ export class StoryService {
 			record = next;
 		};
 		try {
-			if (!profile.runExclusive) throw new StoryError("SESSION_NOT_READY", "プロファイルの実行キューがありません");
-			await profile.runExclusive(async (client) => {
-				if (this.#closing) throw new StoryError("INTERRUPTED", "Relayを終了しています");
-				const controller = new AbortController();
-				this.#controllers.add(controller);
-				const timer = setTimeout(() => controller.abort(), this.#options.settings.operationTimeoutMs);
-				const check = () => {
-					if (controller.signal.aborted) throw new StoryError("INTERRUPTED", "投稿処理が中断されました");
-				};
-				let publisher: Awaited<ReturnType<typeof createBrowserStoryPublisher>> | undefined;
-				try {
-					check();
-					const session = await client.getSessionStatus();
-					if (session.state !== "ready") throw new StoryError("SESSION_NOT_READY", "Instagramへのログインが必要です");
-					publisher = await (this.#options.publisher ?? createBrowserStoryPublisher)(client.page, controller.signal);
-					check();
-					const account = await publisher.getAccount();
-					if (expectedAccount && (expectedAccount.id !== account.id || expectedAccount.username !== account.username))
-						throw new StoryError("ACCOUNT_CHANGED", "プレビューのアカウントが変更されました。再確認してください");
-					await update({ state: "uploading", account });
-					check();
-					await publisher.upload(media);
-					check();
-					const current = await publisher.getAccount();
-					if (current.id !== account.id || current.username !== account.username)
-						throw new StoryError("ACCOUNT_CHANGED", "投稿先アカウントが変更されています");
-					// 公開要求の前に必ず永続化する。ここから先の不明な結果は再送しない。
-					await update({ state: "publishing" });
-					check();
-					const mediaId = await publisher.publish(account, record.job.audience, caption);
-					if (!/^\d+$/.test(mediaId)) throw new StoryError("PUBLICATION_UNKNOWN", "公開結果を確認できません");
-					await update({ state: "published", mediaId });
-				} finally {
-					clearTimeout(timer);
-					controller.abort();
-					await publisher?.close().catch(() => undefined);
-					this.#controllers.delete(controller);
-				}
-			});
+			await withMediaSession(
+				profile,
+				async (session) => {
+					if (this.#closing) throw new StoryError("INTERRUPTED", "Relayを終了しています");
+					const controller = new AbortController();
+					this.#controllers.add(controller);
+					const timer = setTimeout(() => controller.abort(), this.#options.settings.operationTimeoutMs);
+					const check = () => {
+						if (controller.signal.aborted) throw new StoryError("INTERRUPTED", "投稿処理が中断されました");
+					};
+					let publisher: Awaited<ReturnType<typeof createBrowserStoryPublisher>> | undefined;
+					try {
+						check();
+						const status = await session.getSessionStatus();
+						if (status.state !== "ready") throw new StoryError("SESSION_NOT_READY", "Instagramへのログインが必要です");
+						publisher = await session.createPublisher(controller.signal);
+						check();
+						const account = await publisher.getAccount();
+						if (expectedAccount && (expectedAccount.id !== account.id || expectedAccount.username !== account.username))
+							throw new StoryError("ACCOUNT_CHANGED", "プレビューのアカウントが変更されました。再確認してください");
+						await update({ state: "uploading", account });
+						check();
+						await publisher.upload(media);
+						check();
+						const current = await publisher.getAccount();
+						if (current.id !== account.id || current.username !== account.username)
+							throw new StoryError("ACCOUNT_CHANGED", "投稿先アカウントが変更されています");
+						// 公開要求の前に必ず永続化する。ここから先の不明な結果は再送しない。
+						await update({ state: "publishing" });
+						check();
+						const mediaId = await publisher.publish(account, record.job.audience, caption);
+						if (!/^\d+$/.test(mediaId)) throw new StoryError("PUBLICATION_UNKNOWN", "公開結果を確認できません");
+						await update({ state: "published", mediaId });
+					} finally {
+						clearTimeout(timer);
+						controller.abort();
+						await publisher?.close().catch(() => undefined);
+						this.#controllers.delete(controller);
+					}
+				},
+				{ publisher: this.#options.publisher },
+			);
 		} catch (error) {
 			const uncertain = record.job.state === "publishing";
 			const code = uncertain ? "PUBLICATION_UNKNOWN" : error instanceof StoryError ? error.code : "UPLOAD_FAILED";

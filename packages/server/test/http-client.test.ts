@@ -123,19 +123,35 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		});
 		expect(f.fetcher).toHaveBeenCalledTimes(1);
 	});
-	it("大きな数値IDを丸めず、ハイライトのID・所有者を検証する", async () => {
+	it("大きな数値IDを丸めず、固定クエリでハイライトを照合する", async () => {
+		const html = new Response(
+			'"LSD",[],{"token":"LSD"} "DTSGInitialData",[],{"token":"DTSG"} "IG_USER_EIMU":"1784000"',
+		);
 		const f = await fixture([
 			ok({ form_data: { username: "owner" } }),
-			ok({ tray: [{ id: "highlight:17999999999999999", title: "保存先", user: { pk: "123" } }] }),
+			html,
 			new Response(
-				'{"status":"ok","reels":{"highlight:17999999999999999":{"id":"highlight:17999999999999999","user":{"pk":123},"items":[{"pk":39999999999999999}]}}}',
+				JSON.stringify({
+					data: {
+						highlights: {
+							edges: [{ node: { id: "highlight:17999999999999999", title: "保存先", user: { pk: "123" } } }],
+							page_info: { has_next_page: false },
+						},
+					},
+				}),
+			),
+			new Response(
+				'{"data":{"xdt_api__v1__feed__reels_media__connection":{"edges":[{"node":{"id":"highlight:17999999999999999","user":{"pk":123},"items":[{"pk":39999999999999999}]}}],"page_info":{"has_next_page":false}}}}',
 			),
 		]);
 		const client = await f.open();
 		expect((await client.listHighlights(signal())).highlights).toEqual([{ id: "17999999999999999", title: "保存先" }]);
 		expect(await client.highlightItems("17999999999999999", signal())).toEqual(["39999999999999999"]);
 		await expect(client.highlightItems("../../other", signal())).rejects.toMatchObject({ code: "INVALID_INPUT" });
-		expect(f.fetcher).toHaveBeenCalledTimes(3);
+		expect(f.fetcher).toHaveBeenCalledTimes(4);
+		const body = f.fetcher.mock.calls[2]?.[1]?.body as URLSearchParams;
+		expect(body.get("doc_id")).toBe("26970053832668570");
+		expect(body.get("__comet_req")).toBe("7");
 	});
 	it("素材を固定アップロード先へ送り、既存offsetがあれば停止する", async () => {
 		const f = await fixture([ok({ offset: 0 }), ok({}), ok({})]);

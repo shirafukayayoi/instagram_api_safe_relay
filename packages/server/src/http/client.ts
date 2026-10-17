@@ -63,6 +63,7 @@ export class InstagramHttpClient {
 	readonly #file: string;
 	readonly #options: ClientOptions;
 	#closed = false;
+	#tokens: { lsd: string; dtsg: string; av: string } | undefined;
 	private constructor(session: Session, file: string, options: ClientOptions) {
 		this.#session = session;
 		this.#file = file;
@@ -100,6 +101,7 @@ export class InstagramHttpClient {
 		signal: AbortSignal,
 		body?: URLSearchParams | Uint8Array,
 		extraHeaders: Record<string, string> = {},
+		kind: "json" | "html" = "json",
 	): Promise<Json> {
 		if (this.#closed || signal.aborted) throw new StoryError("INTERRUPTED", "HTTP操作が中断されました");
 		const now = Date.now() / 1000;
@@ -145,9 +147,18 @@ export class InstagramHttpClient {
 				this.#options.onSessionError?.("session_not_ready");
 				throw new StoryError("SESSION_NOT_READY", "Instagramの利用制限により停止しました。自動再試行しません");
 			}
+			if ([401, 403].includes(response.status)) {
+				this.#options.onSessionError?.("login_required");
+				throw new StoryError("SESSION_NOT_READY", "Instagramへ手動で再ログインしてください");
+			}
+			if (kind === "html") {
+				if (!response.ok) throw new StoryError("CATALOG_STALE", "Webの認証情報を確認できません");
+				await this.#refreshCookies(response.headers);
+				return { html: await response.text() };
+			}
 			let data: Json;
 			try {
-				data = object(parseJson(await response.text()));
+				data = object(parseJson((await response.text()).replace(/^for \(;;\);/, "")));
 			} catch {
 				throw new StoryError("CATALOG_STALE", "Instagramの応答形式を確認できません");
 			}
@@ -159,7 +170,10 @@ export class InstagramHttpClient {
 				this.#options.onSessionError?.("login_required");
 				throw new StoryError("SESSION_NOT_READY", "Instagramへ手動で再ログインしてください");
 			}
-			if (!response.ok || data.status !== "ok")
+			if (
+				!response.ok ||
+				(endpoint === "/graphql/query" ? !data.data || data.errors || data.error : data.status !== "ok")
+			)
 				throw new StoryError("CATALOG_STALE", "Instagramによる受付を確認できません");
 			await this.#refreshCookies(response.headers);
 			return data;
@@ -220,14 +234,104 @@ export class InstagramHttpClient {
 			throw new StoryError("ACCOUNT_CHANGED", "保存した投稿先と実ログインアカウントが一致しません");
 		return { ...this.#session.account };
 	}
+	async #webTokens(signal: AbortSignal) {
+		if (this.#tokens) return this.#tokens;
+		const { html } = await this.#json(
+			"www.instagram.com",
+			`/${this.#session.account.username}/`,
+			signal,
+			undefined,
+			{ "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none" },
+			"html",
+		);
+		if (typeof html !== "string") throw new StoryError("CATALOG_STALE", "Webの認証情報を取得できません");
+		const lsd = /"LSD",\[\],\{"token":"([^"]+)"/.exec(html)?.[1] ?? /"lsd":"([^"]+)"/.exec(html)?.[1];
+		const dtsg =
+			/"DTSGInitialData",\[\],\{"token":"([^"]+)"/.exec(html)?.[1] ?? /"dtsg":\{"token":"([^"]+)"/.exec(html)?.[1];
+		const av = /"IG_USER_EIMU":"(\d+)"/.exec(html)?.[1];
+		if (!lsd || !dtsg || !av || lsd.length > 1024 || dtsg.length > 2048)
+			throw new StoryError("CATALOG_STALE", "Webの認証形式が変わりました");
+		this.#tokens = { lsd, dtsg, av };
+		return this.#tokens;
+	}
+	async #highlightConnection(
+		kind: "tray" | "items",
+		variables: Json,
+		signal: AbortSignal,
+	): Promise<{ nodes: Json[]; next: string | null }> {
+		// gallery-dl 8770e6e9c0で更新された固定の読み取りクエリ2件だけを使用する。
+		const operation =
+			kind === "tray" ? "PolarisProfileStoryHighlightsTrayContentQuery" : "PolarisStoriesV3HighlightsPageQuery";
+		const field = kind === "tray" ? "highlights" : "xdt_api__v1__feed__reels_media__connection";
+		const docId = kind === "tray" ? "26970053832668570" : "28325328583775973";
+		const { lsd, dtsg, av } = await this.#webTokens(signal);
+		const data = await this.#json(
+			"www.instagram.com",
+			"/graphql/query",
+			signal,
+			new URLSearchParams({
+				av,
+				__d: "www",
+				__user: "0",
+				__a: "1",
+				__comet_req: "7",
+				__crn: "comet.igweb.PolarisProfilePostsTabRoute",
+				fb_dtsg: dtsg,
+				lsd,
+				jazoest: `2${Array.from(dtsg).reduce((sum, char) => sum + char.charCodeAt(0), 0)}`,
+				fb_api_caller_class: "RelayModern",
+				fb_api_req_friendly_name: operation,
+				server_timestamps: "true",
+				doc_id: docId,
+				variables: JSON.stringify(variables),
+			}),
+			{
+				"X-FB-Friendly-Name": operation,
+				"X-FB-LSD": lsd,
+				"X-Root-Field-Name": field,
+				"X-ASBD-ID": "359341",
+				"Sec-Fetch-Site": "same-origin",
+				"Sec-Fetch-Mode": "cors",
+				"Sec-Fetch-Dest": "empty",
+			},
+		);
+		const connection = object(object(data.data)[field]);
+		if (!Array.isArray(connection.edges)) throw new StoryError("CATALOG_STALE", "ハイライトの応答形式を確認できません");
+		const info = object(connection.page_info);
+		if (
+			typeof info.has_next_page !== "boolean" ||
+			(info.has_next_page && (typeof info.end_cursor !== "string" || !info.end_cursor))
+		)
+			throw new StoryError("CATALOG_STALE", "ハイライトの全件取得を確認できません");
+		return {
+			nodes: connection.edges.map((edge: unknown) => object(object(edge).node)),
+			next: info.has_next_page ? String(info.end_cursor) : null,
+		};
+	}
+	async #allHighlights(kind: "tray" | "items", variables: Json, signal: AbortSignal): Promise<Json[]> {
+		const nodes: Json[] = [];
+		const cursors = new Set<string>();
+		let after: string | null = null;
+		for (let page = 0; page < 100; page++) {
+			const result = await this.#highlightConnection(kind, { ...variables, after }, signal);
+			nodes.push(...result.nodes);
+			if (!result.next) return nodes;
+			if (cursors.has(result.next)) break;
+			cursors.add(result.next);
+			after = result.next;
+		}
+		throw new StoryError("CATALOG_STALE", "ハイライトのページングが完了しません。途中結果は返しません");
+	}
 	async listHighlights(signal: AbortSignal): Promise<{ account: StoryAccount; highlights: Highlight[] }> {
 		const account = await this.getAccount(signal);
-		const data = await this.#json("www.instagram.com", `/api/v1/highlights/${account.id}/highlights_tray/`, signal);
-		if (!Array.isArray(data.tray)) throw new StoryError("CATALOG_STALE", "ハイライト一覧を確認できません");
-		const highlights = data.tray.map((item: unknown) => {
-			const reel = object(item);
+		const nodes = await this.#allHighlights("tray", { user_id: account.id }, signal);
+		const highlights = nodes.map((reel) => {
 			const id = typeof reel.id === "string" ? /^highlight:(\d+)$/.exec(reel.id)?.[1] : undefined;
-			if (!id || typeof reel.title !== "string" || numericId(object(reel.user).pk) !== account.id)
+			if (
+				!id ||
+				typeof reel.title !== "string" ||
+				numericId(object(reel.user).pk ?? object(reel.user).id) !== account.id
+			)
 				throw new StoryError("CATALOG_STALE", "自分のハイライトを照合できません");
 			return { id, title: reel.title };
 		});
@@ -235,18 +339,29 @@ export class InstagramHttpClient {
 	}
 	async highlightItems(id: string, signal: AbortSignal): Promise<string[]> {
 		validateId(id);
-		const data = await this.#json("www.instagram.com", `/api/v1/feed/reels_media/?reel_ids=highlight%3A${id}`, signal);
-		const reel = object(object(data.reels)[`highlight:${id}`]);
+		const reels = await this.#allHighlights(
+			"items",
+			{
+				initial_reel_id: `highlight:${id}`,
+				reel_ids: [`highlight:${id}`],
+				first: 3,
+				last: 2,
+				__relay_internal__pv__PolarisCommunityNoteStoriesLabelEnabledrelayprovider: true,
+			},
+			signal,
+		);
+		if (reels.length !== 1) throw new StoryError("CATALOG_STALE", "対象ハイライトを一意に照合できません");
+		const reel = reels[0] ?? {};
 		if (
 			reel.id !== `highlight:${id}` ||
-			numericId(object(reel.user).pk) !== this.#session.account.id ||
+			numericId(object(reel.user).pk ?? object(reel.user).id) !== this.#session.account.id ||
 			!Array.isArray(reel.items)
 		)
-			throw new StoryError("CATALOG_STALE", "ハイライトの登録済みストーリーを照合できません");
+			throw new StoryError("CATALOG_STALE", "登録済みストーリーを照合できません");
 		return reel.items.map((item: unknown) => {
 			const media = object(item);
 			const pk = numericId(media.pk);
-			if (!pk || (media.user && numericId(object(media.user).pk) !== this.#session.account.id))
+			if (!pk || (media.user && numericId(object(media.user).pk ?? object(media.user).id) !== this.#session.account.id))
 				throw new StoryError("CATALOG_STALE", "登録済みメディアのIDを確認できません");
 			return pk;
 		});

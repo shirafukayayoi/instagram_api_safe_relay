@@ -157,6 +157,32 @@ describe("素材の検証", () => {
 });
 
 describe("ジョブと重複防止", () => {
+	it("ブラウザークライアントなしでも同じ台帳・文面・公開範囲を使う", async () => {
+		const f = await fixture();
+		delete f.profile.client;
+		delete f.profile.runExclusive;
+		const queue = new SerialQueue();
+		f.profile.runMediaExclusive = (task) =>
+			queue.run(() =>
+				task({
+					getSessionStatus: async () => ({ state: "ready" }),
+					createPublisher: async () => f.publisher,
+					createHighlights: async () => {
+						throw new Error("対象外");
+					},
+				}),
+			);
+		const input = { filePath: f.filePath, audience: "close_friends", caption: "文面" };
+		const preview = await f.service.preview("one", input);
+		expect(preview.account).toEqual(account);
+		expect(f.publisher.upload).not.toHaveBeenCalled();
+		const job = await f.service.create("one", "http-only", input);
+		expect(await waitFor(f.service, job.id)).toMatchObject({ state: "published", audience: "close_friends" });
+		expect((await f.service.create("one", "http-only", input)).id).toBe(job.id);
+		expect(f.publisher.publish).toHaveBeenCalledExactlyOnceWith(account, "close_friends", "文面");
+		expect(f.factory).not.toHaveBeenCalled();
+	});
+
 	it("キャプションを公開処理へ渡し、同じキーの文面変更を拒否する", async () => {
 		const { service, filePath, publisher } = await fixture();
 		const caption = "コメント🌸\n次の行";

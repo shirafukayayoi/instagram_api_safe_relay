@@ -29,6 +29,11 @@ const cdpBrowserSchema = z.strictObject({
 	cdpEndpoint: z.string().url(),
 });
 
+const httpBrowserSchema = z.strictObject({
+	type: z.literal("http"),
+	sessionFile: z.string().min(1),
+});
+
 const profileSchema = z.strictObject({
 	name: z.string().trim().min(1).max(64),
 	home: z
@@ -37,7 +42,7 @@ const profileSchema = z.strictObject({
 		.refine((value) => new URL(value).hostname === "www.instagram.com")
 		.default("https://www.instagram.com/"),
 	pageReloadIntervalMinutes: z.number().int().min(5).max(1440).optional(),
-	browser: z.discriminatedUnion("type", [launchBrowserSchema, cdpBrowserSchema]),
+	browser: z.discriminatedUnion("type", [launchBrowserSchema, cdpBrowserSchema, httpBrowserSchema]),
 });
 
 export const settingsSchema = z
@@ -47,11 +52,13 @@ export const settingsSchema = z
 		logPrettyPrint: z.boolean().default(true),
 		dashboard: z.boolean().default(true),
 		requestTimeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
-		storyMentions: z.strictObject({
-			enabled: z.boolean().default(false),
-			stateDir: z.string().min(1).default("./story_mention_data"),
-			operationTimeoutMs: z.number().int().min(30000).max(900000).default(300000),
-		}).default({ enabled: false, stateDir: "./story_mention_data", operationTimeoutMs: 300000 }),
+		storyMentions: z
+			.strictObject({
+				enabled: z.boolean().default(false),
+				stateDir: z.string().min(1).default("./story_mention_data"),
+				operationTimeoutMs: z.number().int().min(30000).max(900000).default(300000),
+			})
+			.default({ enabled: false, stateDir: "./story_mention_data", operationTimeoutMs: 300000 }),
 		direct: z
 			.strictObject({
 				enabled: z.boolean().default(false),
@@ -65,6 +72,7 @@ export const settingsSchema = z
 				allowedMediaDirectories: z.array(z.string().min(1)).default([]),
 				stateDir: z.string().min(1).default("./story_data"),
 				ffprobePath: z.string().min(1).default("ffprobe"),
+				ffmpegPath: z.string().min(1).optional(),
 				operationTimeoutMs: z.number().int().min(30_000).max(900_000).default(300_000),
 			})
 			.default({
@@ -89,6 +97,14 @@ export const settingsSchema = z
 			}),
 	})
 	.superRefine((settings, context) => {
+		if (
+			settings.profiles.some((profile) => profile.browser.type === "http") &&
+			(settings.direct.enabled || settings.storyMentions.enabled)
+		)
+			context.addIssue({
+				code: "custom",
+				message: "HTTPモードはストーリー・ハイライト専用です。DM・メンション受付は無効にしてください",
+			});
 		if (!settings.stories.enabled) return;
 		if (settings.stories.allowedMediaDirectories.length === 0) {
 			context.addIssue({
@@ -98,7 +114,7 @@ export const settingsSchema = z
 			});
 		}
 		for (const [index, profile] of settings.profiles.entries()) {
-			if (profile.browser.browserType !== "chromium") {
+			if (profile.browser.type !== "http" && profile.browser.browserType !== "chromium") {
 				context.addIssue({
 					code: "custom",
 					path: ["profiles", index, "browser", "browserType"],
