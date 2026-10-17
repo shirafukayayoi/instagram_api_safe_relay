@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { serve } from "@hono/node-server";
 import pino from "pino";
+import { AccountService } from "./accounts/service.js";
 import { createApp } from "./app.js";
 import { DmService } from "./direct/service.js";
 import { DmStore } from "./direct/store.js";
@@ -74,7 +75,10 @@ if (settings.storyMentions.enabled) {
 	await store.open();
 	storyMentions = new MentionService({ settings: settings.storyMentions, profiles, store });
 }
+const accounts = new AccountService(profiles, settings.accountSelectionFile);
+await accounts.open();
 const app = createApp({
+	accounts,
 	profiles,
 	token,
 	requestTimeoutMs: settings.requestTimeoutMs,

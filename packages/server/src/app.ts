@@ -1,23 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { type Context, Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { streamSSE } from "hono/streaming";
 import type { OperationInputMap, OperationName, RelayErrorCode } from "instagram-api-safe-contracts";
 import { parseOperationInput } from "instagram-api-safe-contracts";
-import { Hono, type Context } from "hono";
-import { streamSSE } from "hono/streaming";
-import { bodyLimit } from "hono/body-limit";
-import { isAllowedHost, isAuthorized } from "./utils/auth.js";
-import { SerialQueue } from "./utils/queue.js";
-import type { RelayProfile, SafeTrace } from "./types.js";
+import { mountAccountRoutes } from "./accounts/routes.js";
+import type { AccountService } from "./accounts/service.js";
+import { DmError, dmStatus } from "./direct/errors.js";
+import type { DmService } from "./direct/service.js";
+import { mountHighlightRoutes } from "./highlights/routes.js";
+import type { HighlightService } from "./highlights/service.js";
 import { StoryError, storyStatus } from "./stories/errors.js";
 import type { StoryService } from "./stories/service.js";
-import type { DmService } from "./direct/service.js";
-import { DmError, dmStatus } from "./direct/errors.js";
-import type { MentionService } from "./story-mentions/service.js";
 import { mountMentionRoutes } from "./story-mentions/routes.js";
-import type { HighlightService } from "./highlights/service.js";
-import { mountHighlightRoutes } from "./highlights/routes.js";
+import type { MentionService } from "./story-mentions/service.js";
+import type { RelayProfile, SafeTrace } from "./types.js";
+import { isAllowedHost, isAuthorized } from "./utils/auth.js";
+import { SerialQueue } from "./utils/queue.js";
 
 type CreateAppOptions = {
+	accounts?: AccountService;
 	profiles: RelayProfile[];
 	token: string;
 	requestTimeoutMs?: number;
@@ -62,6 +65,7 @@ const withTimeout = <T>(promise: Promise<T>, timeoutMs: number): Promise<T> =>
 	});
 
 export const createApp = ({
+	accounts,
 	profiles,
 	token,
 	requestTimeoutMs = 30_000,
@@ -158,8 +162,9 @@ export const createApp = ({
 		return profiles.length === 1 ? profiles[0] : undefined;
 	};
 
-	mountMentionRoutes(app, storyMentions, name => resolveProfile(name)?.name);
-	mountHighlightRoutes(app, highlights, name => resolveProfile(name)?.name);
+	mountAccountRoutes(app, accounts);
+	mountMentionRoutes(app, storyMentions, (name) => resolveProfile(name)?.name);
+	mountHighlightRoutes(app, highlights, (name) => resolveProfile(name)?.name);
 	const run = async <TName extends OperationName>(c: Context, operation: TName, rawInput: unknown) => {
 		let input: OperationInputMap[TName];
 		try {

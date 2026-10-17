@@ -48,6 +48,7 @@ const profileSchema = z.strictObject({
 export const settingsSchema = z
 	.strictObject({
 		port: z.number().int().min(1).max(65535).default(3000),
+		accountSelectionFile: z.string().min(1).default("../../work/skill-relay/selected-account.json"),
 		logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 		logPrettyPrint: z.boolean().default(true),
 		dashboard: z.boolean().default(true),

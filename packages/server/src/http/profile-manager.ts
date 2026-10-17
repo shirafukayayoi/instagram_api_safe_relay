@@ -40,7 +40,7 @@ export class HttpProfileManager {
 					this.#profile.state = state;
 				},
 			});
-			await this.#client.getAccount(this.#controller.signal);
+			this.#profile.account = await this.#client.getAccount(this.#controller.signal);
 			this.#profile.state = "ready";
 		} catch (error) {
 			this.#profile.lastError = error instanceof StoryError ? error.code : "SESSION_NOT_READY";
