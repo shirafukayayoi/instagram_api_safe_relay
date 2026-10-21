@@ -61,6 +61,14 @@ export const storyJobSchema = z.strictObject({
 	removal: z
 		.strictObject({ mediaId: z.string().regex(/^[1-9][0-9]{0,29}$/), verifiedAt: z.string().datetime() })
 		.optional(),
+	// 結果不明の台帳は保持し、全件照合と明示許可を得た試験だけ重複防止を解除する。
+	retryRelease: z
+		.strictObject({
+			verifiedAt: z.string().datetime(),
+			reason: z.literal("no_active_story"),
+			authorization: z.literal("explicit"),
+		})
+		.optional(),
 });
 export type CreateStoryInput = z.infer<typeof createStoryInputSchema>;
 export type StoryAccount = z.infer<typeof storyAccountSchema>;

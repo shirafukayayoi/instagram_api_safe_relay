@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Highlight, StoryAccount, StoryFeedPostReference, StoryFeedPost } from "instagram-api-safe-contracts";
@@ -19,6 +19,12 @@ const sessionSchema = z.object({
 		.min(1)
 		.max(512)
 		.regex(/^[^\r\n]+$/),
+	mobile: z
+		.object({
+			uuid: z.string().uuid(),
+			androidId: z.string().regex(/^android-[a-f0-9]{16}$/),
+		})
+		.optional(),
 	cookies: z
 		.array(
 			z.object({
@@ -96,6 +102,50 @@ export class InstagramHttpClient {
 	#cookie(name: string) {
 		return this.#session.cookies.find((cookie) => cookie.name === name)?.value ?? "";
 	}
+	async #saveSession() {
+		const temporary = path.join(path.dirname(this.#file), `.${randomUUID()}.tmp`);
+		try {
+			await fs.writeFile(temporary, `${JSON.stringify(this.#session)}\n`, { mode: 0o600, flag: "wx" });
+			await fs.rename(temporary, this.#file);
+		} catch {
+			throw new StoryError("STORAGE_UNAVAILABLE", "HTTPセッションを保存できません");
+		} finally {
+			await fs.unlink(temporary).catch(() => undefined);
+		}
+	}
+	async #mobileHeaders(): Promise<Record<string, string>> {
+		if (!this.#session.mobile) {
+			this.#session.mobile = { uuid: randomUUID(), androidId: `android-${randomBytes(8).toString("hex")}` };
+			try {
+				await this.#saveSession();
+			} catch (error) {
+				this.#session.mobile = undefined;
+				throw error;
+			}
+		}
+		// 保存済みセッションの表現だけを変える。ログイン要求や端末認証の偽造は行わない。
+		const authorization = Buffer.from(
+			JSON.stringify({
+				ds_user_id: this.#session.account.id,
+				sessionid: this.#cookie("sessionid"),
+				should_use_header_over_cookies: true,
+			}),
+		).toString("base64");
+		return {
+			"User-Agent":
+				"Instagram 449.0.0.52.84 Android (34/14; 480dpi; 1344x2992; Google/google; Pixel 8 Pro; husky; husky; en_US; 1079242191)",
+			Authorization: `Bearer IGT:2:${authorization}`,
+			"X-IG-App-ID": "567067343352427",
+			"IG-INTENDED-USER-ID": this.#session.account.id,
+			"IG-U-DS-USER-ID": this.#session.account.id,
+			"X-IG-Device-ID": this.#session.mobile.uuid,
+			"X-IG-Android-ID": this.#session.mobile.androidId,
+			"X-IG-Capabilities": "3brTv10=",
+			"X-IG-App-Locale": "en_US",
+			"X-IG-Device-Locale": "en_US",
+			"X-MID": this.#cookie("mid"),
+		};
+	}
 	async #json(
 		host: "www.instagram.com" | "i.instagram.com",
 		endpoint: string,
@@ -103,6 +153,7 @@ export class InstagramHttpClient {
 		body?: URLSearchParams | Uint8Array,
 		extraHeaders: Record<string, string> = {},
 		kind: "json" | "html" | "rupload-init" = "json",
+		mobile = false,
 	): Promise<Json> {
 		if (this.#closed || signal.aborted) throw new StoryError("INTERRUPTED", "HTTP操作が中断されました");
 		const now = Date.now() / 1000;
@@ -115,20 +166,22 @@ export class InstagramHttpClient {
 			this.#options.onSessionError?.("login_required");
 			throw new StoryError("SESSION_NOT_READY", "保存済みログインの有効期限が切れています");
 		}
-		const headers = {
-			"User-Agent": this.#session.userAgent,
-			Cookie: this.#session.cookies
-				.filter((cookie) => cookie.expires === null || cookie.expires <= 0 || cookie.expires > now)
-				.map((cookie) => `${cookie.name}=${cookie.value}`)
-				.join("; "),
-			"X-CSRFToken": this.#cookie("csrftoken"),
-			"X-IG-App-ID": "936619743392459",
-			"X-IG-WWW-Claim": this.#wwwClaim,
-			"X-Requested-With": "XMLHttpRequest",
-			Origin: "https://www.instagram.com",
-			Referer: "https://www.instagram.com/",
-			...extraHeaders,
-		};
+		const headers = mobile
+			? { ...(await this.#mobileHeaders()), ...extraHeaders }
+			: {
+					"User-Agent": this.#session.userAgent,
+					Cookie: this.#session.cookies
+						.filter((cookie) => cookie.expires === null || cookie.expires <= 0 || cookie.expires > now)
+						.map((cookie) => `${cookie.name}=${cookie.value}`)
+						.join("; "),
+					"X-CSRFToken": this.#cookie("csrftoken"),
+					"X-IG-App-ID": "936619743392459",
+					"X-IG-WWW-Claim": this.#wwwClaim,
+					"X-Requested-With": "XMLHttpRequest",
+					Origin: "https://www.instagram.com",
+					Referer: "https://www.instagram.com/",
+					...extraHeaders,
+				};
 		try {
 			// fetchには再試行を実装しない。認証付きリダイレクトも追跡しない。
 			const response = await (this.#options.fetch ?? fetch)(`https://${host}${endpoint}`, {
@@ -149,7 +202,7 @@ export class InstagramHttpClient {
 				this.#options.onSessionError?.("session_not_ready");
 				throw new StoryError("SESSION_NOT_READY", "Instagramの利用制限により停止しました。自動再試行しません");
 			}
-			if ([401, 403].includes(response.status)) {
+			if ([401, 403].includes(response.status) && kind === "html") {
 				this.#options.onSessionError?.("login_required");
 				throw new StoryError("SESSION_NOT_READY", "Instagramへ手動で再ログインしてください");
 			}
@@ -169,6 +222,11 @@ export class InstagramHttpClient {
 				throw new StoryError("SESSION_NOT_READY", "Instagramで手動の追加認証が必要です");
 			}
 			if ([401, 403].includes(response.status) || data.message === "login_required") {
+				if (mobile)
+					throw new StoryError(
+						"FEED_SHARE_UNAVAILABLE",
+						"モバイルAPIで保存済みセッションを利用できません。公開しません",
+					);
 				this.#options.onSessionError?.("login_required");
 				throw new StoryError("SESSION_NOT_READY", "Instagramへ手動で再ログインしてください");
 			}
@@ -227,15 +285,22 @@ export class InstagramHttpClient {
 				changed = true;
 			}
 		}
-		if (changed) {
-			const temporary = path.join(path.dirname(this.#file), `.${randomUUID()}.tmp`);
-			try {
-				await fs.writeFile(temporary, `${JSON.stringify(this.#session)}\n`, { mode: 0o600, flag: "wx" });
-				await fs.rename(temporary, this.#file);
-			} finally {
-				await fs.unlink(temporary).catch(() => undefined);
-			}
-		}
+		if (changed) await this.#saveSession();
+	}
+	async getMobileAccount(signal: AbortSignal): Promise<StoryAccount> {
+		const data = await this.#json(
+			"i.instagram.com",
+			"/api/v1/accounts/current_user/?edit=true",
+			signal,
+			undefined,
+			{},
+			"json",
+			true,
+		);
+		const user = object(data.user);
+		if (numericId(user.pk) !== this.#session.account.id || user.username !== this.#session.account.username)
+			throw new StoryError("ACCOUNT_CHANGED", "モバイルAPIの投稿先アカウントが一致しません");
+		return { ...this.#session.account };
 	}
 	async getAccount(signal: AbortSignal): Promise<StoryAccount> {
 		// Web用の固定読み取りAPI。編集・保存の要求は送らない。
@@ -546,6 +611,9 @@ export class InstagramHttpClient {
 		validateId(id);
 		let attachment: Record<string, string> = {};
 		if (feedPost) {
+			const current = await this.getMobileAccount(signal);
+			if (current.id !== account.id || current.username !== account.username)
+				throw new StoryError("ACCOUNT_CHANGED", "カード公開前のアカウントが一致しません");
 			const source = await this.getFeedPost(feedPost.shortcode, signal);
 			if (source.mediaId !== feedPost.mediaId || source.ownerId !== feedPost.ownerId)
 				throw new StoryError("MEDIA_NOT_ALLOWED", "元投稿の参照先が変わりました");
@@ -593,6 +661,7 @@ export class InstagramHttpClient {
 			client_timestamp: String(Math.floor(Date.now() / 1000)),
 			client_shared_at: String(Math.floor(Date.now() / 1000) - 1),
 			extra: { source_width: 1080, source_height: 1920 },
+			...(feedPost ? { _uuid: this.#session.mobile?.uuid, device_id: this.#session.mobile?.androidId } : {}),
 		};
 		const data = await this.#json(
 			feedPost ? "i.instagram.com" : "www.instagram.com",
@@ -601,6 +670,9 @@ export class InstagramHttpClient {
 			feedPost
 				? new URLSearchParams({ signed_body: `SIGNATURE.${JSON.stringify(nativeBody)}` })
 				: new URLSearchParams(body),
+			{},
+			"json",
+			Boolean(feedPost),
 		);
 
 		const media = object(data.media);
@@ -620,8 +692,20 @@ export class InstagramHttpClient {
 		if (feedPost) {
 			let proof = media;
 			if (!Array.isArray(proof.story_feed_media)) {
-				const read = await this.#json("i.instagram.com", `/api/v1/media/${pk}/info/`, signal);
-				proof = object(Array.isArray(read.items) && read.items.length === 1 ? read.items[0] : undefined);
+				try {
+					const read = await this.#json(
+						"i.instagram.com",
+						`/api/v1/media/${pk}/info/`,
+						signal,
+						undefined,
+						{},
+						"json",
+						true,
+					);
+					proof = object(Array.isArray(read.items) && read.items.length === 1 ? read.items[0] : undefined);
+				} catch {
+					throw new StoryError("PUBLICATION_UNKNOWN", "公開後の読み戻しを確認できません。再送しません", pk);
+				}
 			}
 			const links = Array.isArray(proof.story_feed_media) ? proof.story_feed_media : [];
 			if (

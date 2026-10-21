@@ -153,6 +153,43 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		expect(body.get("doc_id")).toBe("26970053832668570");
 		expect(body.get("__comet_req")).toBe("7");
 	});
+	it("モバイルAPIは保存済みセッションを専用ヘッダーで送り、同じ端末IDを再利用する", async () => {
+		const f = await fixture([
+			ok({ user: { pk: "123", username: "owner" } }),
+			ok({ user: { pk: "123", username: "owner" } }),
+			ok({ form_data: { username: "owner" } }),
+		]);
+		expect(await (await f.open()).getMobileAccount(signal())).toEqual(account);
+		const first = f.fetcher.mock.calls[0]?.[1]?.headers as Record<string, string>;
+		expect(JSON.parse(Buffer.from((first.Authorization ?? "").replace("Bearer IGT:2:", ""), "base64").toString())).toEqual({
+			ds_user_id: "123",
+			sessionid: "SECRET",
+			should_use_header_over_cookies: true,
+		});
+		expect(first.Cookie).toBeUndefined();
+		expect(first["X-IG-App-ID"]).toBe("567067343352427");
+		const reopened = await f.open();
+		await reopened.getMobileAccount(signal());
+		expect(f.fetcher.mock.calls[1]?.[1]?.headers).toMatchObject({ "X-IG-Device-ID": first["X-IG-Device-ID"] });
+		await reopened.getAccount(signal());
+		const webHeaders = f.fetcher.mock.calls[2]?.[1]?.headers as Record<string, string> | undefined;
+		expect(webHeaders?.Authorization).toBeUndefined();
+		if (process.platform !== "win32") expect((await fs.stat(f.file)).mode & 0o777).toBe(0o600);
+	});
+	it("モバイルAPIが別アカウントや403なら公開要求を送らない", async () => {
+		for (const response of [ok({ user: { pk: "456", username: "other" } }), new Response("PRIVATE", { status: 403 })]) {
+			const f = await fixture([response]);
+			await expect(
+				(await f.open()).publish("1234567890123", account, "all", "", signal(), {
+					shortcode: "BA",
+					mediaId: "64",
+					ownerId: "456",
+				}),
+			).rejects.toBeDefined();
+			expect(f.fetcher).toHaveBeenCalledTimes(1);
+			expect(f.fetcher.mock.calls[0]?.[1]?.method).toBe("GET");
+		}
+	});
 	it("公開・共有許可・投稿コードを照合し、画像CDNへ認証を送らない", async () => {
 		const source = {
 			pk: "64",
@@ -220,27 +257,37 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 			image_versions2: { candidates: [{ url: "https://x.cdninstagram.com/a.jpg", width: 160, height: 90 }] },
 		};
 		const media = { pk: "999", user: { pk: "123" }, story_feed_media: [{ media_id: "64", media_owner_id: "456" }] };
-		const f = await fixture([ok({ items: [source] }), ok({ media })]);
+		const f = await fixture([ok({ user: { pk: "123", username: "owner" } }), ok({ items: [source] }), ok({ media })]);
 		const client = await f.open();
 		expect(await client.publish("1234567890123", account, "all", "", signal(), ref)).toBe("999");
-		const body = f.fetcher.mock.calls[1]?.[1]?.body as URLSearchParams;
+		const body = f.fetcher.mock.calls[2]?.[1]?.body as URLSearchParams;
 		const signed = JSON.parse((body.get("signed_body") ?? "").replace(/^SIGNATURE\./, ""));
 		expect(signed.reshared_media_id).toBe("64");
-		expect(f.fetcher.mock.calls[1]?.[0]).toBe("https://i.instagram.com/api/v1/media/configure_to_story/");
+		expect(f.fetcher.mock.calls[2]?.[0]).toBe("https://i.instagram.com/api/v1/media/configure_to_story/");
 		expect(JSON.parse(signed.tap_models)[0]).toMatchObject({
 			type: "feed_media",
 			media_id: "64",
 			media_owner_id: "456",
 		});
+		const unreadable = await fixture([
+			ok({ user: { pk: "123", username: "owner" } }),
+			ok({ items: [source] }),
+			ok({ media: { pk: "999", user: { pk: "123" } } }),
+			new Response("PRIVATE", { status: 403 }),
+		]);
+		await expect(
+			(await unreadable.open()).publish("1234567890123", account, "all", "", signal(), ref),
+		).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN", mediaId: "999" });
 		for (const links of [[], [{ media_id: "65" }], [{ media_id: "64", media_owner_id: "987" }]]) {
 			const bad = await fixture([
+				ok({ user: { pk: "123", username: "owner" } }),
 				ok({ items: [source] }),
 				ok({ media: { pk: "999", user: { pk: "123" } } }),
 				ok({ items: [{ ...media, story_feed_media: links }] }),
 			]);
 			await expect(
 				(await bad.open()).publish("1234567890123", account, "all", "", signal(), ref),
-			).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN", mediaId:"999" });
+			).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN", mediaId: "999" });
 			expect(bad.fetcher.mock.calls.filter(([, opt]) => opt?.method === "POST")).toHaveLength(1);
 		}
 	});

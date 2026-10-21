@@ -26,6 +26,10 @@ export const createHttpStoryPublisher = async (
 	};
 	return {
 		supportsFeedPost: feedPostSharingEnabled,
+		checkFeedPostSession: async () => {
+			check();
+			await client.getMobileAccount(signal);
+		},
 		getFeedPost: (shortcode) => client.getFeedPost(shortcode, signal),
 		getFeedImage: (shortcode) => client.getFeedImage(shortcode, signal),
 		getAccount: async () => {

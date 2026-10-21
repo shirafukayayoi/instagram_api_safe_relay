@@ -106,6 +106,7 @@ export class StoryStore {
 				entry.job.profile === profile &&
 				entry.job.feedPost?.mediaId === mediaId &&
 				!entry.job.removal &&
+				!(entry.job.state === "unknown" && entry.job.retryRelease) &&
 				entry.job.state !== "failed",
 		);
 		return found ? structuredClone(found) : undefined;

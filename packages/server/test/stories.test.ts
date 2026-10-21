@@ -796,6 +796,57 @@ describe("元投稿カードの共有", () => {
 		expect(restored.findFeedPost("one", "64")).toBeUndefined();
 		expect(restored.get(job.id)?.job.state).toBe("published");
 	});
+	it("カード用セッションが利用不可なら素材をアップロードしない", async () => {
+		const publisher = {
+			...backend(),
+			supportsFeedPost: true,
+			getFeedPost: vi.fn(async () => source),
+			checkFeedPostSession: vi.fn(async () => {
+				throw new StoryError("SESSION_NOT_READY", "モバイルAPI利用不可");
+			}),
+		};
+		const f = await fixture(publisher);
+		const job = await f.service.create("one", "feed-preflight", { filePath: f.filePath, feedPost });
+		expect(await waitFor(f.service, job.id)).toMatchObject({ state: "failed", errorCode: "SESSION_NOT_READY" });
+		expect(publisher.upload).not.toHaveBeenCalled();
+		expect(publisher.publish).not.toHaveBeenCalled();
+	});
+	it("結果不明は明示した試験の解除注記がなければ再送せず、元の状態を保持する", async () => {
+		const publisher = {
+			...backend(),
+			supportsFeedPost: true,
+			getFeedPost: vi.fn(async () => source),
+			publish: vi.fn(async () => {
+				throw new StoryError("PUBLICATION_UNKNOWN", "結果不明");
+			}),
+		};
+		const f = await fixture(publisher);
+		const job = await f.service.create("one", "feed-unknown", { filePath: f.filePath, feedPost });
+		expect(await waitFor(f.service, job.id)).toMatchObject({ state: "unknown" });
+		await expect(f.service.create("one", "feed-again", { filePath: f.filePath, feedPost })).rejects.toMatchObject({
+			code: "IDEMPOTENCY_CONFLICT",
+		});
+		const record = f.store.get(job.id);
+		if (!record) throw new Error("元の台帳が必要です");
+		await f.store.save({
+			...record,
+			job: {
+				...record.job,
+				retryRelease: { verifiedAt: new Date().toISOString(), reason: "no_active_story", authorization: "explicit" },
+			},
+		});
+		expect(f.store.findFeedPost("one", "64")).toBeUndefined();
+		expect(f.store.get(job.id)?.job.state).toBe("unknown");
+		await f.store.save({
+			...record,
+			job: {
+				...record.job,
+				state: "published",
+				retryRelease: { verifiedAt: new Date().toISOString(), reason: "no_active_story", authorization: "explicit" },
+			},
+		});
+		expect(f.store.findFeedPost("one", "64")?.job.state).toBe("published");
+	});
 	it("未対応アダプター・元投稿の不一致ではアップロードしない", async () => {
 		for (const publisher of [
 			backend(),
