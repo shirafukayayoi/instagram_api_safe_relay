@@ -74,6 +74,7 @@ export const settingsSchema = z
 				stateDir: z.string().min(1).default("./story_data"),
 				ffprobePath: z.string().min(1).default("ffprobe"),
 				ffmpegPath: z.string().min(1).optional(),
+				feedPostSharingEnabled: z.boolean().optional(),
 				operationTimeoutMs: z.number().int().min(30_000).max(900_000).default(300_000),
 			})
 			.default({

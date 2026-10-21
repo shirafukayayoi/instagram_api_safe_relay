@@ -224,8 +224,10 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		const client = await f.open();
 		expect(await client.publish("1234567890123", account, "all", "", signal(), ref)).toBe("999");
 		const body = f.fetcher.mock.calls[1]?.[1]?.body as URLSearchParams;
-		expect(body.get("reshared_media_id")).toBe("64");
-		expect(JSON.parse(body.get("tap_models") ?? "[]")[0]).toMatchObject({
+		const signed = JSON.parse((body.get("signed_body") ?? "").replace(/^SIGNATURE\./, ""));
+		expect(signed.reshared_media_id).toBe("64");
+		expect(f.fetcher.mock.calls[1]?.[0]).toBe("https://i.instagram.com/api/v1/media/configure_to_story/");
+		expect(JSON.parse(signed.tap_models)[0]).toMatchObject({
 			type: "feed_media",
 			media_id: "64",
 			media_owner_id: "456",
@@ -238,7 +240,7 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 			]);
 			await expect(
 				(await bad.open()).publish("1234567890123", account, "all", "", signal(), ref),
-			).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN" });
+			).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN", mediaId:"999" });
 			expect(bad.fetcher.mock.calls.filter(([, opt]) => opt?.method === "POST")).toHaveLength(1);
 		}
 	});

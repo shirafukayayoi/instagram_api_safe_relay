@@ -103,7 +103,10 @@ export class StoryStore {
 		this.assertHealthy();
 		const found = [...this.#records.values()].find(
 			(entry) =>
-				entry.job.profile === profile && entry.job.feedPost?.mediaId === mediaId && entry.job.state !== "failed",
+				entry.job.profile === profile &&
+				entry.job.feedPost?.mediaId === mediaId &&
+				!entry.job.removal &&
+				entry.job.state !== "failed",
 		);
 		return found ? structuredClone(found) : undefined;
 	}

@@ -12,6 +12,7 @@ export type StoryFeedPost = StoryFeedPostReference & {
 	width: number;
 	height: number;
 	carouselCount: number;
+	collaborators?: string[];
 };
 
 /** 書き込み契約は公開情報の4操作カタログとは分離する。 */
@@ -37,6 +38,7 @@ export const storyErrorCodes = [
 	"ACCOUNT_CHANGED",
 	"UPLOAD_FAILED",
 	"PUBLICATION_UNKNOWN",
+	"FEED_SHARE_UNAVAILABLE",
 	"INTERRUPTED",
 	"STORAGE_UNAVAILABLE",
 	"NOT_FOUND",
@@ -56,6 +58,9 @@ export const storyJobSchema = z.strictObject({
 	mediaId: z.string().nullable(),
 	errorCode: z.enum(storyErrorCodes).nullable(),
 	feedPost: storyFeedPostReferenceSchema.optional(),
+	removal: z
+		.strictObject({ mediaId: z.string().regex(/^[1-9][0-9]{0,29}$/), verifiedAt: z.string().datetime() })
+		.optional(),
 });
 export type CreateStoryInput = z.infer<typeof createStoryInputSchema>;
 export type StoryAccount = z.infer<typeof storyAccountSchema>;

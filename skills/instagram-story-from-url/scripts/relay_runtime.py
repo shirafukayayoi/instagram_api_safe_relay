@@ -118,7 +118,7 @@ def start_relay():
     flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
              | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0
     with (logs / "stdout.log").open("ab") as stdout, (logs / "stderr.log").open("ab") as stderr:
-        process = subprocess.Popen([node, str(entry)], cwd=server_dir, env=environment,
+        process = subprocess.Popen([node, "--dns-result-order=ipv4first", str(entry)], cwd=server_dir, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
                                    creationflags=flags, start_new_session=os.name != "nt")
     (logs / "process.json").write_text(json.dumps({"pid": process.pid}), encoding="utf-8")
@@ -158,7 +158,9 @@ def ensure_ready(profile, start=False):
         if state == "ready":
             return {"profile": profile, "state": state}
         if state not in {"starting", "recovering"} or time.monotonic() >= deadline:
-            raise RuntimeError(f"Instagramセッション: {state}。ログイン・2FA・challengeはブラウザで手動完了してください")
+            if state in {"login_required", "challenge_required"}:
+                raise RuntimeError(f"Instagramセッション: {state}。ログイン・2FA・challengeはブラウザで手動完了してください")
+            raise RuntimeError(f"Instagramセッション: {state}。Relayの接続・設定とエラーコードを確認してください")
         time.sleep(1)
 
 

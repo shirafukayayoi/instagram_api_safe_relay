@@ -9,6 +9,7 @@ import type { StoryMedia } from "./media.js";
 
 export type StoryPublisher = {
 	getAccount: () => Promise<StoryAccount>;
+	supportsFeedPost?: boolean;
 	getFeedPost?: (shortcode: string) => Promise<StoryFeedPost>;
 	getFeedImage?: (shortcode: string) => Promise<{ bytes: Uint8Array; mimeType: string }>;
 	upload: (media: StoryMedia) => Promise<void>;

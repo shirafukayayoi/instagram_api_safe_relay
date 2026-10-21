@@ -28,6 +28,20 @@ class ShareTests(unittest.TestCase):
     def save(self):
         story.save(self.directory / 'operation.json', self.data)
 
+    def test_card_contains_photo_and_preserves_original(self):
+        from PIL import Image
+        original = self.directory / 'original.png'
+        target = self.directory / 'card.jpg'
+        Image.new('RGB', (160, 90), (190, 20, 20)).save(original)
+        before = original.read_bytes()
+        result = share.create_card(original, target, {'username':'source', 'carouselCount':4, 'collaborators':['collaborator']})
+        with Image.open(target) as image:
+            self.assertEqual(image.size, (1080, 1920))
+            self.assertLess(image.getpixel((540,960))[1], 35)
+            self.assertGreater(image.getpixel((540,100))[1], 45)
+        self.assertEqual(result['authors'], ['source','collaborator'])
+        self.assertEqual(original.read_bytes(), before)
+
     def test_tracking_removed_and_reel_normalized_without_network(self):
         self.assertEqual(share.canonical_url(self.args.url), ('https://www.instagram.com/p/BA/', 'BA'))
         self.assertEqual(share.canonical_url('https://instagram.com/reel/BA/')[1], 'BA')
@@ -66,7 +80,7 @@ class ShareTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             share.run(self.args, self.directory)
             api.assert_called_once_with('story-previews', 'one', 'same-key', {
-                'filePath': str(self.directory / 'background.jpg'), 'audience': 'all', 'caption': '',
+                'filePath': str(self.directory / 'story-card.jpg'), 'audience': 'all', 'caption': '',
                 'feedPost': self.reference})
         self.assertNotIn('job', json.loads((self.directory / 'operation.json').read_text()))
 

@@ -14,7 +14,7 @@ export class HttpProfileManager {
 	#client?: InstagramHttpClient;
 	#stopped = false;
 	#controller = new AbortController();
-	constructor(profile: RelayProfile, sessionFile: string, ffmpegPath = "ffmpeg") {
+	constructor(profile: RelayProfile, sessionFile: string, ffmpegPath = "ffmpeg", feedPostSharingEnabled = false) {
 		this.#profile = profile;
 		this.#file = sessionFile;
 		this.#ffmpegPath = ffmpegPath;
@@ -26,7 +26,12 @@ export class HttpProfileManager {
 				const session: MediaSession = {
 					getSessionStatus: async () => ({ state: profile.state === "ready" ? "ready" : "unknown" }),
 					createPublisher: (signal) =>
-						createHttpStoryPublisher(client, AbortSignal.any([signal, this.#controller.signal]), this.#ffmpegPath),
+						createHttpStoryPublisher(
+							client,
+							AbortSignal.any([signal, this.#controller.signal]),
+							this.#ffmpegPath,
+							feedPostSharingEnabled,
+						),
 					createHighlights: (signal) =>
 						createHttpHighlights(client, AbortSignal.any([signal, this.#controller.signal])),
 				};
@@ -44,7 +49,7 @@ export class HttpProfileManager {
 			this.#profile.state = "ready";
 		} catch (error) {
 			this.#profile.lastError = error instanceof StoryError ? error.code : "SESSION_NOT_READY";
-			if (this.#profile.state === "starting") this.#profile.state = "login_required";
+			if (this.#profile.state === "starting") this.#profile.state = "session_not_ready";
 		}
 	}
 	async stop() {

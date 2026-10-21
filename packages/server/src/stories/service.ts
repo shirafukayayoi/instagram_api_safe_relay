@@ -53,12 +53,19 @@ export class StoryService {
 		return profile;
 	}
 
-	async #feedReference(publisher: StoryPublisher, reference: StoryFeedPostReference | undefined, media: StoryMedia) {
+	async #feedReference(
+		publisher: StoryPublisher,
+		reference: StoryFeedPostReference | undefined,
+		media: StoryMedia,
+		publishing = false,
+	) {
 		if (!reference) return undefined;
 		if (!publisher.getFeedPost)
 			throw new StoryError("MEDIA_NOT_ALLOWED", "投稿カードの共有はHTTPモードのみ対応しています");
 		if (media.mimeType === "video/mp4")
 			throw new StoryError("MEDIA_INVALID", "投稿カードの背景は画像で指定してください");
+		if (publishing && publisher.supportsFeedPost !== true)
+			throw new StoryError("FEED_SHARE_UNAVAILABLE", "投稿カードの公開は未検証のため停止しています");
 		const post = await publisher.getFeedPost(reference.shortcode);
 		if (post.mediaId !== reference.mediaId || post.ownerId !== reference.ownerId)
 			throw new StoryError("MEDIA_NOT_ALLOWED", "元投稿のID・所有者が一致しません");
@@ -381,7 +388,7 @@ export class StoryService {
 						const account = await publisher.getAccount();
 						if (expectedAccount && (expectedAccount.id !== account.id || expectedAccount.username !== account.username))
 							throw new StoryError("ACCOUNT_CHANGED", "プレビューのアカウントが変更されました。再確認してください");
-						await this.#feedReference(publisher, feedPost, media);
+						await this.#feedReference(publisher, feedPost, media, true);
 						await update({ state: "uploading", account });
 						check();
 						await publisher.upload(media);
@@ -410,7 +417,13 @@ export class StoryService {
 			const uncertain = record.job.state === "publishing";
 			const code = uncertain ? "PUBLICATION_UNKNOWN" : error instanceof StoryError ? error.code : "UPLOAD_FAILED";
 			try {
-				await update({ state: uncertain ? "unknown" : "failed", errorCode: code });
+				await update({
+					state: uncertain ? "unknown" : "failed",
+					errorCode: code,
+					...(uncertain && error instanceof StoryError && error.mediaId && /^[0-9]+$/.test(error.mediaId)
+						? { mediaId: error.mediaId }
+						: {}),
+				});
 			} catch {
 				this.#options.onStorageError?.(record.job.id);
 			}

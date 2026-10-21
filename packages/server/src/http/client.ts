@@ -282,6 +282,13 @@ export class InstagramHttpClient {
 				width: Number(image.width),
 				height: Number(image.height),
 				carouselCount: Array.isArray(media.carousel_media) ? media.carousel_media.length : 1,
+				...(Array.isArray(media.coauthor_producers)
+					? {
+							collaborators: media.coauthor_producers
+								.map((item) => object(item).username)
+								.filter((name): name is string => typeof name === "string" && /^[A-Za-z0-9._]{1,30}$/.test(name)),
+						}
+					: {}),
 			},
 			image: image.url,
 		};
@@ -549,8 +556,8 @@ export class InstagramHttpClient {
 						x: 0.5,
 						y: 0.5,
 						z: 0,
-						width: 0.88,
-						height: Math.min(0.8, ((1080 * 0.88 * source.height) / source.width + 80) / 1920),
+						width: (Math.min(950 / source.width, 1360 / source.height) * source.width) / 1080,
+						height: (Math.min(950 / source.width, 1360 / source.height) * source.height + 80) / 1920,
 						rotation: 0,
 						type: "feed_media",
 						media_id: source.mediaId,
@@ -563,21 +570,39 @@ export class InstagramHttpClient {
 				]),
 			};
 		}
+		const body = {
+			upload_id: id,
+			...attachment,
+			configure_mode: "1",
+			caption,
+			share_to_facebook: "",
+			share_to_fb_destination_id: "",
+			share_to_fb_destination_type: "USER",
+			...(audience === "close_friends" ? { audience: "besties" } : {}),
+		};
+		// Web向けのフォームはfeed_mediaを反映しない。カードだけモバイルAPIの形式で送る。
+		const nativeBody = {
+			...body,
+			_uid: this.#session.account.id,
+			_csrftoken: this.#cookie("csrftoken"),
+			source_type: "4",
+			creation_surface: "camera",
+			capture_type: "normal",
+			original_media_type: "photo",
+			camera_session_id: randomUUID(),
+			client_timestamp: String(Math.floor(Date.now() / 1000)),
+			client_shared_at: String(Math.floor(Date.now() / 1000) - 1),
+			extra: { source_width: 1080, source_height: 1920 },
+		};
 		const data = await this.#json(
-			"www.instagram.com",
+			feedPost ? "i.instagram.com" : "www.instagram.com",
 			"/api/v1/media/configure_to_story/",
 			signal,
-			new URLSearchParams({
-				upload_id: id,
-				...attachment,
-				configure_mode: "1",
-				caption,
-				share_to_facebook: "",
-				share_to_fb_destination_id: "",
-				share_to_fb_destination_type: "USER",
-				...(audience === "close_friends" ? { audience: "besties" } : {}),
-			}),
+			feedPost
+				? new URLSearchParams({ signed_body: `SIGNATURE.${JSON.stringify(nativeBody)}` })
+				: new URLSearchParams(body),
 		);
+
 		const media = object(data.media);
 		const exactId = typeof media.id === "string" ? /^(\d+)_(\d+)$/.exec(media.id) : null;
 		const pk = numericId(media.pk) ?? (exactId?.[2] === account.id ? exactId[1] : null);
@@ -595,7 +620,7 @@ export class InstagramHttpClient {
 		if (feedPost) {
 			let proof = media;
 			if (!Array.isArray(proof.story_feed_media)) {
-				const read = await this.#json("www.instagram.com", `/api/v1/media/${pk}/info/`, signal);
+				const read = await this.#json("i.instagram.com", `/api/v1/media/${pk}/info/`, signal);
 				proof = object(Array.isArray(read.items) && read.items.length === 1 ? read.items[0] : undefined);
 			}
 			const links = Array.isArray(proof.story_feed_media) ? proof.story_feed_media : [];
@@ -608,7 +633,7 @@ export class InstagramHttpClient {
 						(object(link).media_owner_id === undefined || numericId(object(link).media_owner_id) === feedPost.ownerId),
 				)
 			)
-				throw new StoryError("PUBLICATION_UNKNOWN", "公開後の元投稿リンクを確認できません。再送しません");
+				throw new StoryError("PUBLICATION_UNKNOWN", "公開後の元投稿リンクを確認できません。再送しません", pk);
 		}
 		return pk;
 	}

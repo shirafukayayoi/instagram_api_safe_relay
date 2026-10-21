@@ -4,6 +4,7 @@ export class StoryError extends Error {
 	constructor(
 		readonly code: StoryErrorCode,
 		message: string,
+		readonly mediaId?: string,
 	) {
 		super(message);
 		this.name = "StoryError";

@@ -33,7 +33,12 @@ const managers = await Promise.all(
 		const profile: RelayProfile = { name: profileSettings.name, state: "starting" };
 		profiles.push(profile);
 		if (profileSettings.browser.type === "http")
-			return new HttpProfileManager(profile, profileSettings.browser.sessionFile, settings.stories.ffmpegPath);
+			return new HttpProfileManager(
+				profile,
+				profileSettings.browser.sessionFile,
+				settings.stories.ffmpegPath,
+				settings.stories.feedPostSharingEnabled,
+			);
 		const { ProfileManager } = await import("./profile-manager.js");
 		return new ProfileManager({
 			settings: profileSettings,

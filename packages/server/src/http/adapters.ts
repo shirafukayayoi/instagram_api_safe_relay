@@ -14,6 +14,7 @@ export const createHttpStoryPublisher = async (
 	client: InstagramHttpClient,
 	signal: AbortSignal,
 	ffmpegPath = "ffmpeg",
+	feedPostSharingEnabled = false,
 ): Promise<StoryPublisher> => {
 	const uploadId = `${Date.now()}${randomInt(1000, 10000)}`;
 	let uploaded = false;
@@ -24,6 +25,7 @@ export const createHttpStoryPublisher = async (
 		if (closed || signal.aborted) throw new StoryError("INTERRUPTED", "HTTP投稿を中断しました");
 	};
 	return {
+		supportsFeedPost: feedPostSharingEnabled,
 		getFeedPost: (shortcode) => client.getFeedPost(shortcode, signal),
 		getFeedImage: (shortcode) => client.getFeedImage(shortcode, signal),
 		getAccount: async () => {

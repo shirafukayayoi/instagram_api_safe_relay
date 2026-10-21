@@ -761,7 +761,7 @@ describe("元投稿カードの共有", () => {
 		expect(publisher.publish).not.toHaveBeenCalled();
 	});
 	it("元投稿を照合し、異なるキーでも同じ投稿の重複を拒否する", async () => {
-		const publisher = { ...backend(), getFeedPost: vi.fn(async () => source) };
+		const publisher = { ...backend(), supportsFeedPost: true, getFeedPost: vi.fn(async () => source) };
 		const f = await fixture(publisher);
 		const preview = await f.service.preview("one", { filePath: f.filePath, feedPost });
 		expect(preview.feedPost).toEqual(source);
@@ -787,11 +787,19 @@ describe("元投稿カードの共有", () => {
 		stores.push(restored);
 		await restored.open();
 		expect(restored.findFeedPost("one", "64")?.job).toMatchObject({ id: job.id, state: "published", feedPost });
+		const record = restored.get(job.id);
+		if (!record) throw new Error("元の台帳が必要です");
+		await restored.save({
+			...record,
+			job: { ...record.job, removal: { mediaId: "999", verifiedAt: new Date().toISOString() } },
+		});
+		expect(restored.findFeedPost("one", "64")).toBeUndefined();
+		expect(restored.get(job.id)?.job.state).toBe("published");
 	});
 	it("未対応アダプター・元投稿の不一致ではアップロードしない", async () => {
 		for (const publisher of [
 			backend(),
-			{ ...backend(), getFeedPost: vi.fn(async () => ({ ...source, ownerId: "987" })) },
+			{ ...backend(), supportsFeedPost: true, getFeedPost: vi.fn(async () => ({ ...source, ownerId: "987" })) },
 		]) {
 			const f = await fixture(publisher);
 			const job = await f.service.create("one", "feed-a", { filePath: f.filePath, feedPost });
@@ -800,4 +808,28 @@ describe("元投稿カードの共有", () => {
 			expect(publisher.publish).not.toHaveBeenCalled();
 		}
 	});
+});
+
+it("投稿カードの公開フラグが無効ならアップロード前に停止する", async () => {
+	const publisher = {
+		...backend(),
+		supportsFeedPost: false,
+		getFeedPost: vi.fn(async () => ({
+			shortcode: "BA",
+			mediaId: "64",
+			ownerId: "456",
+			username: "source",
+			width: 160,
+			height: 90,
+			carouselCount: 1,
+		})),
+	};
+	const f = await fixture(publisher);
+	const job = await f.service.create("one", "disabled-feed", {
+		filePath: f.filePath,
+		feedPost: { shortcode: "BA", mediaId: "64", ownerId: "456" },
+	});
+	expect(await waitFor(f.service, job.id)).toMatchObject({ state: "failed", errorCode: "FEED_SHARE_UNAVAILABLE" });
+	expect(publisher.upload).not.toHaveBeenCalled();
+	expect(publisher.publish).not.toHaveBeenCalled();
 });
