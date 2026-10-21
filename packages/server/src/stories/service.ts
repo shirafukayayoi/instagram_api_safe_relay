@@ -65,7 +65,7 @@ export class StoryService {
 		if (media.mimeType === "video/mp4")
 			throw new StoryError("MEDIA_INVALID", "投稿カードの背景は画像で指定してください");
 		if (publishing && publisher.supportsFeedPost !== true)
-			throw new StoryError("FEED_SHARE_UNAVAILABLE", "投稿カードの公開は未検証のため停止しています");
+			throw new StoryError("FEED_SHARE_UNAVAILABLE", "投稿カードの公開が設定で無効です");
 		if (publishing) await publisher.checkFeedPostSession?.();
 		const post = await publisher.getFeedPost(reference.shortcode);
 		if (post.mediaId !== reference.mediaId || post.ownerId !== reference.ownerId)
