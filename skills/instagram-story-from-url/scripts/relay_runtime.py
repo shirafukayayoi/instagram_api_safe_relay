@@ -47,7 +47,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError("Relayのリダイレクトを拒否しました")
 
 
-def request(endpoint, profile="", key="", payload=None, timeout=30):
+def request(endpoint, profile="", key="", payload=None, timeout=30, binary=False):
     port = settings().get("port", 3000)
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise RuntimeError("Relayのport設定が不正です")
@@ -61,6 +61,13 @@ def request(endpoint, profile="", key="", payload=None, timeout=30):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(req, timeout=timeout) as response:
+            if binary:
+                if response.headers.get_content_type() not in {"image/jpeg", "image/png"}:
+                    raise RuntimeError("Relayが画像以外を返しました")
+                body = response.read(8 * 1024 * 1024 + 1)
+                if len(body) > 8 * 1024 * 1024:
+                    raise RuntimeError("画像が8MiBを超えています")
+                return body
             return json.load(response)
     except urllib.error.HTTPError as error:
         try:

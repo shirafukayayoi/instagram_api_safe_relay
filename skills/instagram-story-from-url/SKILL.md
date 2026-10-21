@@ -1,6 +1,6 @@
 ---
 name: instagram-story-from-url
-description: YouTube・TikTok動画をローカルInstagram Relayから通常または親しい友達向けストーリーズへ投稿し、指定された既存ハイライトへの登録まで行う。横動画の縦変換、指定範囲の切り出し、曲名・アーティストのコメントに対応し、公開範囲と登録先を維持する。
+description: YouTube・TikTok動画の投稿と、Instagram投稿URLの元投稿リンク付きカード共有を、ローカルRelayからストーリーズへ行う。指定された既存ハイライトへの登録にも対応する。横動画の縦変換、指定範囲の切り出し、曲名・アーティストのコメントに対応し、公開範囲と登録先を維持する。
 ---
 
 # URLからInstagramストーリーズ
@@ -53,7 +53,21 @@ python '<skill-dir>/scripts/story_from_url.py' --check --start-relay --profile a
 
 この既定値は新規操作に適用する。既存の操作IDを再開するときは保存済みのキャプションを維持し、公開済みストーリーの再投稿やコメントの追記は行わない。
 
-## 手順
+## Instagram投稿のカード共有
+
+Instagramの `/p/<shortcode>/` または `/reel/<shortcode>/` URLをストーリーへ共有する場合は、`scripts/share_instagram_post.py` を使う。YouTube/TikTok用スクリプトへ渡さない。このPCでは起動ラッパーへ `--share-post` を最初の引数として追加する。
+
+```bash
+/path/to/instagram-story --share-post 'https://www.instagram.com/p/<shortcode>/' --audience all --operation '<UUID>' --preview-only
+```
+
+HTTPモード専用。共有用クエリを除いた元投稿URL・操作ID・投稿先・公開範囲・文面を固定する。元投稿が公開され、`can_viewer_reshare: true` と共有無効化なしを確認できる場合だけ受け付ける。プレビュー応答の元投稿ID・投稿者と投稿先アカウントを確認する。明示的な共有依頼の範囲で、同じ引数から `--preview-only` を外すと公開する。
+
+先頭画像から1080×1920のぼかし背景を作り、元投稿ID・投稿者IDを持つ中央配置の `feed_media` カードを指定する。プレビュー画像は背景用素材で、カードはInstagram側で扱われる。切り出し・動画化による元投稿の再アップロードでは代用しない。元画像、背景、操作JSONは `work/story-smoke/<UUID>/` に保持し、CDNの署名付きURL・認証値を応答やログへ出さない。
+
+公開後にアカウント・公開範囲・指定キャプションに加え、`story_feed_media` が同じ元投稿を参照していることをRelayが検証する。確認できない場合は `unknown` として再投稿しない。同じプロファイル・元投稿の受理済み/公開済み/結果不明は、別の操作キーでも重複させない。`--caption` と `--highlight` / `--highlight-id` を使える。指定していないハイライトには登録しない。自分宛てメンションストーリーの再投稿とは別機能で、未検証のメンション再投稿は有効化しない。詳細はRelayの `docs/feed-post-stories.md`。
+
+## YouTube・TikTok動画の手順
 
 1. ユーザーが指定したURL、投稿先、公開範囲、任意のキャプションを確認する。明示的な投稿依頼は実行許可として扱う。「親しい」は `close_friends`、通常ストーリーは `all`。公開範囲が省略された場合も `all` とする。曲の場合は上記のコメント規則を適用する。指定範囲と文面を変更しない。「コメント付き」は `--caption` で投稿データへ保存する。画像・動画上への文字描画は行わない。
 2. 依頼ごとにUUIDの操作IDを作る。再開時は同じIDを使う。成功済み・結果不明の操作に新しいIDを作らない。公開要求前の`failed`は、Relayの状態と実装から未公開を確認し、原因を修正できた場合に限り、継続中の明示的な投稿依頼の範囲で新しい試行IDを使える。その操作JSONへ旧操作ID・失敗ジョブID・確認した原因を残し、旧台帳は保持する。キャプション・投稿先・公開範囲・指定された切り出し範囲を変えない。
@@ -83,6 +97,7 @@ python '<skill-dir>/scripts/story_from_url.py' 'https://vt.tiktok.com/ZSb5JR1mx/
 ```bash
 python '<skill-dir>/scripts/test_story_from_url.py'
 python '<skill-dir>/scripts/test_story_media.py'
+python '<skill-dir>/scripts/test_share_instagram_post.py'
 ```
 
 ## ハイライト登録

@@ -99,6 +99,15 @@ export class StoryStore {
 		return record ? structuredClone(record) : undefined;
 	}
 
+	findFeedPost(profile: string, mediaId: string): StoryRecord | undefined {
+		this.assertHealthy();
+		const found = [...this.#records.values()].find(
+			(entry) =>
+				entry.job.profile === profile && entry.job.feedPost?.mediaId === mediaId && entry.job.state !== "failed",
+		);
+		return found ? structuredClone(found) : undefined;
+	}
+
 	assertHealthy(): void {
 		if (!this.#healthy || !this.#lock) throw new StoryError("STORAGE_UNAVAILABLE", "ストーリー台帳が利用できません");
 	}

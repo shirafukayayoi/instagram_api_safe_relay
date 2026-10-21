@@ -153,6 +153,95 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		expect(body.get("doc_id")).toBe("26970053832668570");
 		expect(body.get("__comet_req")).toBe("7");
 	});
+	it("公開・共有許可・投稿コードを照合し、画像CDNへ認証を送らない", async () => {
+		const source = {
+			pk: "64",
+			code: "BA",
+			media_type: 8,
+			user: { pk: "456", username: "source", is_private: false },
+			can_viewer_reshare: true,
+			ig_media_sharing_disabled: false,
+			image_versions2: {
+				candidates: [{ url: "https://x.cdninstagram.com/photo.jpg?sig=PRIVATE", width: 160, height: 90 }],
+			},
+			carousel_media: [{}, {}],
+		};
+		const f = await fixture([
+			ok({ items: [source] }),
+			ok({ items: [source] }),
+			new Response(new Uint8Array([1, 2]), { headers: { "Content-Type": "image/jpeg" } }),
+		]);
+		const client = await f.open();
+		expect(await client.getFeedPost("BA", signal())).toEqual({
+			shortcode: "BA",
+			mediaId: "64",
+			ownerId: "456",
+			username: "source",
+			width: 160,
+			height: 90,
+			carouselCount: 2,
+		});
+		expect((await client.getFeedImage("BA", signal())).bytes.length).toBe(2);
+		expect(f.fetcher.mock.calls[2]?.[1]?.headers).toBeUndefined();
+		for (const bad of [
+			{ ...source, user: { ...source.user, is_private: true } },
+			{ ...source, can_viewer_reshare: false },
+			{ ...source, ig_media_sharing_disabled: true },
+		]) {
+			const other = await fixture([ok({ items: [bad] })]);
+			await expect((await other.open()).getFeedPost("BA", signal())).rejects.toMatchObject({
+				code: "MEDIA_NOT_ALLOWED",
+			});
+		}
+		const other = await fixture([
+			ok({
+				items: [
+					{
+						...source,
+						image_versions2: { candidates: [{ url: "https://example.com/private", width: 160, height: 90 }] },
+					},
+				],
+			}),
+		]);
+		await expect((await other.open()).getFeedImage("BA", signal())).rejects.toMatchObject({
+			code: "MEDIA_NOT_ALLOWED",
+		});
+		expect(other.fetcher).toHaveBeenCalledTimes(1);
+	});
+	it("元投稿の参照を送信し、公開応答または読み戻しで同じリンクだけを成功にする", async () => {
+		const ref = { shortcode: "BA", mediaId: "64", ownerId: "456" };
+		const source = {
+			pk: "64",
+			code: "BA",
+			media_type: 1,
+			user: { pk: "456", username: "source", is_private: false },
+			can_viewer_reshare: true,
+			ig_media_sharing_disabled: false,
+			image_versions2: { candidates: [{ url: "https://x.cdninstagram.com/a.jpg", width: 160, height: 90 }] },
+		};
+		const media = { pk: "999", user: { pk: "123" }, story_feed_media: [{ media_id: "64", media_owner_id: "456" }] };
+		const f = await fixture([ok({ items: [source] }), ok({ media })]);
+		const client = await f.open();
+		expect(await client.publish("1234567890123", account, "all", "", signal(), ref)).toBe("999");
+		const body = f.fetcher.mock.calls[1]?.[1]?.body as URLSearchParams;
+		expect(body.get("reshared_media_id")).toBe("64");
+		expect(JSON.parse(body.get("tap_models") ?? "[]")[0]).toMatchObject({
+			type: "feed_media",
+			media_id: "64",
+			media_owner_id: "456",
+		});
+		for (const links of [[], [{ media_id: "65" }], [{ media_id: "64", media_owner_id: "987" }]]) {
+			const bad = await fixture([
+				ok({ items: [source] }),
+				ok({ media: { pk: "999", user: { pk: "123" } } }),
+				ok({ items: [{ ...media, story_feed_media: links }] }),
+			]);
+			await expect(
+				(await bad.open()).publish("1234567890123", account, "all", "", signal(), ref),
+			).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN" });
+			expect(bad.fetcher.mock.calls.filter(([, opt]) => opt?.method === "POST")).toHaveLength(1);
+		}
+	});
 	it("アップロード開始専用の形式を通常APIに流用せず、不明な開始応答を拒否する", async () => {
 		const f = await fixture([new Response('{"offset":0}')]);
 		const client = await f.open();

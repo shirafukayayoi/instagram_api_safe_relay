@@ -86,6 +86,10 @@ Invoke-RestMethod -Headers $headers "http://127.0.0.1:3000/v1/dm/jobs/$($job.dat
 
 DM一覧・メッセージ取得と通常の一対一会話へのテキスト送信は実アカウントで確認済みです。グループ会話の実送信は未検証です。通常テストにはモックを使用します。送信試験は宛先と本文を指定した明示的な依頼で行います。
 
+### 投稿カードをストーリーへ共有
+
+HTTPモードで公開Instagram投稿のURLを元投稿リンク付きカードとして共有できます。公開・共有許可、投稿者、公開後の参照を検証します。操作方法とAPIは [投稿カードの共有](docs/feed-post-stories.md) を参照してください。
+
 ### メンション受付・ネイティブ再投稿
 
 `storyMentions: { "enabled": true, "stateDir": "./story_mention_data", "operationTimeoutMs": 300000 }`で受付を有効化します。DMやローカル素材投稿とは別サービスです。自動更新・自動公開・Dashboard操作は追加していません。

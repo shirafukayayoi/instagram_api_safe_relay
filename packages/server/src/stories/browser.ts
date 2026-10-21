@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import type { StoryAccount } from "instagram-api-safe-contracts";
+import type { StoryAccount, StoryFeedPostReference, StoryFeedPost } from "instagram-api-safe-contracts";
 import { storyAccountSchema } from "instagram-api-safe-contracts";
 import type { Page } from "playwright";
 import { StoryError } from "./errors.js";
@@ -9,8 +9,15 @@ import type { StoryMedia } from "./media.js";
 
 export type StoryPublisher = {
 	getAccount: () => Promise<StoryAccount>;
+	getFeedPost?: (shortcode: string) => Promise<StoryFeedPost>;
+	getFeedImage?: (shortcode: string) => Promise<{ bytes: Uint8Array; mimeType: string }>;
 	upload: (media: StoryMedia) => Promise<void>;
-	publish: (account: StoryAccount, audience?: "all" | "close_friends", caption?: string) => Promise<string>;
+	publish: (
+		account: StoryAccount,
+		audience?: "all" | "close_friends",
+		caption?: string,
+		feedPost?: StoryFeedPostReference,
+	) => Promise<string>;
 	close: () => Promise<void>;
 };
 
@@ -152,7 +159,8 @@ export const createBrowserStoryPublisher = async (sourcePage: Page, signal: Abor
 			bytes.length > 50 * 1024 * 1024
 				? media.assetPath
 				: {
-						name: media.mimeType === "video/mp4" ? "story.mp4" : media.mimeType === "image/png" ? "story.png" : "story.jpg",
+						name:
+							media.mimeType === "video/mp4" ? "story.mp4" : media.mimeType === "image/png" ? "story.png" : "story.jpg",
 						mimeType: media.mimeType,
 						buffer: bytes,
 					},

@@ -1,10 +1,25 @@
 import { z } from "zod";
 
+/** 元投稿の参照は投稿・プレビュー・台帳で固定する。 */
+export const storyFeedPostReferenceSchema = z.strictObject({
+	shortcode: z.string().regex(/^[A-Za-z0-9_-]{1,16}$/),
+	mediaId: z.string().regex(/^[1-9][0-9]{0,29}$/),
+	ownerId: z.string().regex(/^[1-9][0-9]{0,29}$/),
+});
+export type StoryFeedPostReference = z.infer<typeof storyFeedPostReferenceSchema>;
+export type StoryFeedPost = StoryFeedPostReference & {
+	username: string;
+	width: number;
+	height: number;
+	carouselCount: number;
+};
+
 /** 書き込み契約は公開情報の4操作カタログとは分離する。 */
 export const createStoryInputSchema = z.strictObject({
 	filePath: z.string().min(1).max(4096),
 	audience: z.enum(["all", "close_friends"]).default("all"),
 	caption: z.string().max(2200).default(""),
+	feedPost: storyFeedPostReferenceSchema.optional(),
 });
 export const storyJobStates = ["queued", "uploading", "publishing", "published", "failed", "unknown"] as const;
 export const storyErrorCodes = [
@@ -40,6 +55,7 @@ export const storyJobSchema = z.strictObject({
 	account: storyAccountSchema.nullable(),
 	mediaId: z.string().nullable(),
 	errorCode: z.enum(storyErrorCodes).nullable(),
+	feedPost: storyFeedPostReferenceSchema.optional(),
 });
 export type CreateStoryInput = z.infer<typeof createStoryInputSchema>;
 export type StoryAccount = z.infer<typeof storyAccountSchema>;
@@ -54,6 +70,7 @@ export type StoryPreview = {
 	account: StoryAccount;
 	audience: CreateStoryInput["audience"];
 	expiresAt: string;
+	feedPost?: StoryFeedPost;
 	media: {
 		mimeType: "image/jpeg" | "image/png" | "video/mp4";
 		size: number;

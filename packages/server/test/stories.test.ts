@@ -731,3 +731,73 @@ describe("HTTPと設定", () => {
 		).toThrow();
 	});
 });
+
+describe("元投稿カードの共有", () => {
+	const feedPost = { shortcode: "BA", mediaId: "64", ownerId: "456" };
+	const source = { ...feedPost, username: "source", width: 160, height: 90, carouselCount: 4 };
+	it("元投稿と画像の読み取りにも認証を要求し、公開を開始しない", async () => {
+		const publisher = {
+			...backend(),
+			getFeedPost: vi.fn(async () => source),
+			getFeedImage: vi.fn(async () => ({ bytes: png, mimeType: "image/png" })),
+		};
+		const f = await fixture(publisher);
+		const token = "0123456789abcdef0123456789abcdef";
+		const app = createApp({ profiles: [f.profile], token, stories: f.service });
+		for (const suffix of ["", "/image"]) {
+			expect(
+				(await app.request(`http://127.0.0.1/v1/story-feed-posts/BA${suffix}`, { headers: { host: "127.0.0.1" } }))
+					.status,
+			).toBe(401);
+		}
+		expect(publisher.getFeedPost).not.toHaveBeenCalled();
+		const headers = { host: "127.0.0.1", authorization: `Bearer ${token}`, "x-profile-name": "one" };
+		const response = await app.request("http://127.0.0.1/v1/story-feed-posts/BA", { headers });
+		expect(await response.json()).toEqual({ data: source });
+		const image = await app.request("http://127.0.0.1/v1/story-feed-posts/BA/image", { headers });
+		expect(image.headers.get("content-type")).toBe("image/png");
+		expect(Buffer.from(await image.arrayBuffer())).toEqual(png);
+		expect(publisher.upload).not.toHaveBeenCalled();
+		expect(publisher.publish).not.toHaveBeenCalled();
+	});
+	it("元投稿を照合し、異なるキーでも同じ投稿の重複を拒否する", async () => {
+		const publisher = { ...backend(), getFeedPost: vi.fn(async () => source) };
+		const f = await fixture(publisher);
+		const preview = await f.service.preview("one", { filePath: f.filePath, feedPost });
+		expect(preview.feedPost).toEqual(source);
+		const results = await Promise.allSettled([
+			f.service.create("one", "feed-a", { filePath: f.filePath, feedPost }),
+			f.service.create("one", "feed-b", { filePath: f.filePath, feedPost }),
+		]);
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		const accepted = results.find((r) => r.status === "fulfilled");
+		if (accepted?.status !== "fulfilled") throw new Error("受理されたジョブが必要です");
+		const job = await waitFor(f.service, accepted.value.id);
+		expect(job).toMatchObject({ state: "published", feedPost });
+		expect(publisher.publish).toHaveBeenCalledExactlyOnceWith(account, "all", "", feedPost);
+		expect(await f.service.create("one", "feed-a", { filePath: f.filePath, feedPost })).toMatchObject({ id: job.id });
+		await expect(f.service.publishPreview("one", preview.id, { confirmed: true })).rejects.toMatchObject({
+			code: "IDEMPOTENCY_CONFLICT",
+		});
+		await expect(
+			f.service.create("one", "feed-a", { filePath: f.filePath, feedPost: { ...feedPost, ownerId: "987" } }),
+		).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+		await f.service.close();
+		const restored = new StoryStore(f.store.directory);
+		stores.push(restored);
+		await restored.open();
+		expect(restored.findFeedPost("one", "64")?.job).toMatchObject({ id: job.id, state: "published", feedPost });
+	});
+	it("未対応アダプター・元投稿の不一致ではアップロードしない", async () => {
+		for (const publisher of [
+			backend(),
+			{ ...backend(), getFeedPost: vi.fn(async () => ({ ...source, ownerId: "987" })) },
+		]) {
+			const f = await fixture(publisher);
+			const job = await f.service.create("one", "feed-a", { filePath: f.filePath, feedPost });
+			expect(await waitFor(f.service, job.id)).toMatchObject({ state: "failed", errorCode: "MEDIA_NOT_ALLOWED" });
+			expect(publisher.upload).not.toHaveBeenCalled();
+			expect(publisher.publish).not.toHaveBeenCalled();
+		}
+	});
+});

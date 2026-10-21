@@ -255,6 +255,26 @@ export const createApp = ({
 			throw new StoryError("INVALID_INPUT", "有効なJSONが必要です");
 		}
 	};
+	// 投稿カード専用の固定読み取り。公開情報の4操作カタログは拡張しない。
+	app.get("/v1/story-feed-posts/:shortcode", async (c) => {
+		try {
+			const profile = previewProfile(c);
+			const result = await stories?.sourcePost(profile, c.req.param("shortcode"));
+			return c.json({ data: result?.post });
+		} catch (error) {
+			return storyFailure(c, error);
+		}
+	});
+	app.get("/v1/story-feed-posts/:shortcode/image", async (c) => {
+		try {
+			const profile = previewProfile(c);
+			const result = await stories?.sourcePost(profile, c.req.param("shortcode"), true);
+			if (!result?.image) throw new StoryError("MEDIA_INVALID", "元投稿の画像を取得できません");
+			return c.body(new Uint8Array(result.image.bytes), 200, { "Content-Type": result.image.mimeType });
+		} catch (error) {
+			return storyFailure(c, error);
+		}
+	});
 	// 素材表示・状態照会・キャンセルは公開処理を開始しない。
 	app.post("/v1/story-previews", async (c) => {
 		try {

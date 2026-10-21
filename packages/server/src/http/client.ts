@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Highlight, StoryAccount } from "instagram-api-safe-contracts";
+import type { Highlight, StoryAccount, StoryFeedPostReference, StoryFeedPost } from "instagram-api-safe-contracts";
 import { z } from "zod";
 import { StoryError } from "../stories/errors.js";
 
@@ -247,6 +247,81 @@ export class InstagramHttpClient {
 		}
 		return { ...this.#session.account };
 	}
+	async #feedPost(shortcode: string, signal: AbortSignal): Promise<{ post: StoryFeedPost; image: string }> {
+		if (!/^[A-Za-z0-9_-]{1,16}$/.test(shortcode)) throw new StoryError("INVALID_INPUT", "投稿コードが不正です");
+		const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+		const id = [...shortcode].reduce((n, c) => n * 64n + BigInt(alphabet.indexOf(c)), 0n).toString();
+		const data = await this.#json("www.instagram.com", `/api/v1/media/${id}/info/`, signal);
+		const items = Array.isArray(data.items) ? data.items : [];
+		const media = object(items[0]);
+		const user = object(media.user);
+		const owner = numericId(user.pk ?? user.id);
+		if (items.length !== 1 || numericId(media.pk) !== id || media.code !== shortcode || !owner)
+			throw new StoryError("CATALOG_STALE", "元投稿のIDと所有者を照合できません");
+		if (user.is_private !== false || media.can_viewer_reshare !== true || media.ig_media_sharing_disabled !== false)
+			throw new StoryError("MEDIA_NOT_ALLOWED", "公開・ストーリー共有の許可を確認できません");
+		const candidates = object(media.image_versions2).candidates;
+		const image = object(Array.isArray(candidates) ? candidates[0] : undefined);
+		if (
+			typeof user.username !== "string" ||
+			!/^[A-Za-z0-9._]{1,30}$/.test(user.username) ||
+			typeof image.url !== "string" ||
+			!Number.isSafeInteger(image.width) ||
+			!Number.isSafeInteger(image.height) ||
+			Number(image.width) <= 0 ||
+			Number(image.height) <= 0 ||
+			![1, 2, 8].includes(Number(media.media_type))
+		)
+			throw new StoryError("CATALOG_STALE", "元投稿の画像情報を確認できません");
+		return {
+			post: {
+				shortcode,
+				mediaId: id,
+				ownerId: owner,
+				username: user.username,
+				width: Number(image.width),
+				height: Number(image.height),
+				carouselCount: Array.isArray(media.carousel_media) ? media.carousel_media.length : 1,
+			},
+			image: image.url,
+		};
+	}
+	async getFeedPost(shortcode: string, signal: AbortSignal): Promise<StoryFeedPost> {
+		return (await this.#feedPost(shortcode, signal)).post;
+	}
+	async getFeedImage(shortcode: string, signal: AbortSignal): Promise<{ bytes: Uint8Array; mimeType: string }> {
+		const { image } = await this.#feedPost(shortcode, signal);
+		const url = new URL(image);
+		if (
+			url.protocol !== "https:" ||
+			url.username ||
+			url.password ||
+			url.port ||
+			![".cdninstagram.com", ".fbcdn.net"].some((domain) => url.hostname.endsWith(domain))
+		)
+			throw new StoryError("MEDIA_NOT_ALLOWED", "Instagram画像CDN以外へアクセスしません");
+		try {
+			// 署名付きURLはローカル応答・ログへ返さず、CDNへ認証Cookieを送らない。
+			const response = await (this.#options.fetch ?? fetch)(url.href, {
+				redirect: "manual",
+				signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+			});
+			const mimeType = response.headers.get("content-type")?.split(";")[0] ?? "";
+			if (!response.ok || !["image/jpeg", "image/png"].includes(mimeType) || !response.body)
+				throw new StoryError("MEDIA_INVALID", "元投稿の画像を取得できません");
+			const chunks: Uint8Array[] = [];
+			let size = 0;
+			for await (const chunk of response.body) {
+				size += chunk.length;
+				if (size > 8 * 1024 * 1024) throw new StoryError("MEDIA_TOO_LARGE", "元投稿の画像は8MiB以下が必要です");
+				chunks.push(chunk);
+			}
+			return { bytes: Buffer.concat(chunks), mimeType };
+		} catch (error) {
+			if (error instanceof StoryError) throw error;
+			throw new StoryError("MEDIA_INVALID", "元投稿の画像通信を確認できません");
+		}
+	}
 	async #webTokens(signal: AbortSignal) {
 		if (this.#tokens) return this.#tokens;
 		const { html } = await this.#json(
@@ -459,14 +534,42 @@ export class InstagramHttpClient {
 		audience: "all" | "close_friends",
 		caption: string,
 		signal: AbortSignal,
+		feedPost?: StoryFeedPostReference,
 	): Promise<string> {
 		validateId(id);
+		let attachment: Record<string, string> = {};
+		if (feedPost) {
+			const source = await this.getFeedPost(feedPost.shortcode, signal);
+			if (source.mediaId !== feedPost.mediaId || source.ownerId !== feedPost.ownerId)
+				throw new StoryError("MEDIA_NOT_ALLOWED", "元投稿の参照先が変わりました");
+			attachment = {
+				reshared_media_id: source.mediaId,
+				tap_models: JSON.stringify([
+					{
+						x: 0.5,
+						y: 0.5,
+						z: 0,
+						width: 0.88,
+						height: Math.min(0.8, ((1080 * 0.88 * source.height) / source.width + 80) / 1920),
+						rotation: 0,
+						type: "feed_media",
+						media_id: source.mediaId,
+						media_owner_id: source.ownerId,
+						product_type: "feed",
+						is_sticker: true,
+						tap_state: 0,
+						tap_state_str_id: "feed_post_sticker_square",
+					},
+				]),
+			};
+		}
 		const data = await this.#json(
 			"www.instagram.com",
 			"/api/v1/media/configure_to_story/",
 			signal,
 			new URLSearchParams({
 				upload_id: id,
+				...attachment,
 				configure_mode: "1",
 				caption,
 				share_to_facebook: "",
@@ -489,6 +592,24 @@ export class InstagramHttpClient {
 				"PUBLICATION_UNKNOWN",
 				"投稿ID・アカウント・公開範囲・文面の公開結果を確認できません。再送しません",
 			);
+		if (feedPost) {
+			let proof = media;
+			if (!Array.isArray(proof.story_feed_media)) {
+				const read = await this.#json("www.instagram.com", `/api/v1/media/${pk}/info/`, signal);
+				proof = object(Array.isArray(read.items) && read.items.length === 1 ? read.items[0] : undefined);
+			}
+			const links = Array.isArray(proof.story_feed_media) ? proof.story_feed_media : [];
+			if (
+				numericId(proof.pk) !== pk ||
+				numericId(object(proof.user).pk) !== account.id ||
+				!links.some(
+					(link) =>
+						numericId(object(link).media_id) === feedPost.mediaId &&
+						(object(link).media_owner_id === undefined || numericId(object(link).media_owner_id) === feedPost.ownerId),
+				)
+			)
+				throw new StoryError("PUBLICATION_UNKNOWN", "公開後の元投稿リンクを確認できません。再送しません");
+		}
 		return pk;
 	}
 	close() {

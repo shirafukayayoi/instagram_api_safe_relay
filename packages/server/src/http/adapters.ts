@@ -24,6 +24,8 @@ export const createHttpStoryPublisher = async (
 		if (closed || signal.aborted) throw new StoryError("INTERRUPTED", "HTTP投稿を中断しました");
 	};
 	return {
+		getFeedPost: (shortcode) => client.getFeedPost(shortcode, signal),
+		getFeedImage: (shortcode) => client.getFeedImage(shortcode, signal),
 		getAccount: async () => {
 			check();
 			return client.getAccount(signal);
@@ -56,7 +58,7 @@ export const createHttpStoryPublisher = async (
 			check();
 			uploaded = true;
 		},
-		publish: async (account, audience = "all", caption = "") => {
+		publish: async (account, audience = "all", caption = "", feedPost) => {
 			check();
 			if (!uploaded || publishAttempted)
 				throw new StoryError("PUBLICATION_UNKNOWN", "未アップロードの公開・公開要求の再送を拒否しました");
@@ -64,7 +66,7 @@ export const createHttpStoryPublisher = async (
 			if (current.id !== account.id || current.username !== account.username)
 				throw new StoryError("ACCOUNT_CHANGED", "投稿先アカウントが変わりました");
 			publishAttempted = true;
-			return client.publish(uploadId, account, audience, caption, signal);
+			return client.publish(uploadId, account, audience, caption, signal, feedPost);
 		},
 		close: async () => {
 			closed = true;

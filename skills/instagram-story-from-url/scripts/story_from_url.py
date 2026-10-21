@@ -197,6 +197,8 @@ def poll_job(args, directory, data):
             print(json.dumps(result, ensure_ascii=False))
             if result["state"] != "published":
                 raise RuntimeError("公開成功を確認できません。再投稿せずInstagram上で確認してください")
+            if data.get("feedPost") and result.get("feedPost") != data["feedPost"]:
+                raise RuntimeError("公開結果の元投稿参照が一致しません。再投稿しません")
             if result.get("audience") != args.audience or not result.get("mediaId"):
                 raise RuntimeError("投稿IDまたは公開範囲の確認が取れません。再投稿せずInstagram上で確認してください")
             if data.get("highlightIntent") and not getattr(args, "preview_only", False):

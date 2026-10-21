@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type {
 	CreateStoryInput,
+	StoryFeedPost,
+	StoryFeedPostReference,
 	StoryAccount,
 	StoryJob,
 	StoryPreview,
@@ -13,7 +15,7 @@ import { mediaReady, withMediaSession } from "../media-session.js";
 import type { RelayProfile } from "../types.js";
 import { SerialQueue } from "../utils/queue.js";
 import type { Settings } from "../utils/settings.js";
-import type { createBrowserStoryPublisher } from "./browser.js";
+import type { createBrowserStoryPublisher, StoryPublisher } from "./browser.js";
 import { StoryError } from "./errors.js";
 import { prepareMedia, type StoryMedia } from "./media.js";
 import type { StoryRecord, StoryStore } from "./store.js";
@@ -51,6 +53,50 @@ export class StoryService {
 		return profile;
 	}
 
+	async #feedReference(publisher: StoryPublisher, reference: StoryFeedPostReference | undefined, media: StoryMedia) {
+		if (!reference) return undefined;
+		if (!publisher.getFeedPost)
+			throw new StoryError("MEDIA_NOT_ALLOWED", "投稿カードの共有はHTTPモードのみ対応しています");
+		if (media.mimeType === "video/mp4")
+			throw new StoryError("MEDIA_INVALID", "投稿カードの背景は画像で指定してください");
+		const post = await publisher.getFeedPost(reference.shortcode);
+		if (post.mediaId !== reference.mediaId || post.ownerId !== reference.ownerId)
+			throw new StoryError("MEDIA_NOT_ALLOWED", "元投稿のID・所有者が一致しません");
+		return post;
+	}
+	sourcePost(
+		profileName: string,
+		shortcode: string,
+		image = false,
+	): Promise<{ post: StoryFeedPost; image?: { bytes: Uint8Array; mimeType: string } }> {
+		const profile = this.#profile(profileName);
+		return withMediaSession(
+			profile,
+			async (session) => {
+				const controller = new AbortController();
+				this.#controllers.add(controller);
+				const timer = setTimeout(() => controller.abort(), this.#options.settings.operationTimeoutMs);
+				let publisher: StoryPublisher | undefined;
+				try {
+					publisher = await session.createPublisher(controller.signal);
+					if (!publisher.getFeedPost || (image && !publisher.getFeedImage))
+						throw new StoryError("MEDIA_NOT_ALLOWED", "投稿カードの共有はHTTPモードのみ対応しています");
+					const post = await publisher.getFeedPost(shortcode);
+					if (image) {
+						if (!publisher.getFeedImage) throw new StoryError("MEDIA_NOT_ALLOWED", "画像の読み取りに対応していません");
+						return { post, image: await publisher.getFeedImage(shortcode) };
+					}
+					return { post };
+				} finally {
+					clearTimeout(timer);
+					controller.abort();
+					this.#controllers.delete(controller);
+					await publisher?.close().catch(() => undefined);
+				}
+			},
+			{ publisher: this.#options.publisher },
+		);
+	}
 	async #discard(id: string): Promise<void> {
 		const entry = this.#previews.get(id);
 		this.#previews.delete(id);
@@ -77,6 +123,8 @@ export class StoryService {
 				if (Date.parse(entry.view.expiresAt) <= Date.now()) await this.#discard(id);
 			}
 			if (this.#previews.size >= 20) throw new StoryError("INVALID_INPUT", "不要なプレビューをキャンセルしてください");
+			if (parsed.data.feedPost && this.#options.store.findFeedPost(profileName, parsed.data.feedPost.mediaId))
+				throw new StoryError("IDEMPOTENCY_CONFLICT", "この元投稿の共有はすでに受理されています");
 			if (!mediaReady(profile)) throw new StoryError("SESSION_NOT_READY", "ブラウザセッションの準備ができていません");
 			const id = randomUUID();
 			const media = await (this.#options.prepare ?? prepareMedia)(
@@ -86,6 +134,7 @@ export class StoryService {
 				id,
 				this.#options.settings.ffprobePath,
 			);
+			let feedPost: StoryFeedPost | undefined;
 			try {
 				const account = await withMediaSession(
 					profile,
@@ -99,6 +148,7 @@ export class StoryService {
 								throw new StoryError("SESSION_NOT_READY", "実ログインアカウントを確認できません");
 							publisher = await session.createPublisher(controller.signal);
 							const current = await publisher.getAccount();
+							feedPost = await this.#feedReference(publisher, parsed.data.feedPost, media);
 							if (controller.signal.aborted) throw new StoryError("INTERRUPTED", "プレビューを中断しました");
 							return current;
 						} finally {
@@ -117,6 +167,7 @@ export class StoryService {
 					account,
 					audience: parsed.data.audience,
 					expiresAt: new Date(Date.now() + previewLifetimeMs).toISOString(),
+					...(feedPost ? { feedPost } : {}),
 					media: metadata,
 				};
 				this.#previews.set(id, { view, input: parsed.data, media });
@@ -167,6 +218,8 @@ export class StoryService {
 			const previous = this.#options.store.get(id);
 			if (previous?.job.profile === profileName) return previous.job;
 			const entry = await this.#preview(profileName, id);
+			if (entry.input.feedPost && this.#options.store.findFeedPost(profileName, entry.input.feedPost.mediaId))
+				throw new StoryError("IDEMPOTENCY_CONFLICT", "この元投稿の共有はすでに受理されています");
 			// 原本の差し替えも再確認を要求する。公開に使うのは表示済みコピーだけ。
 			const current = await (this.#options.prepare ?? prepareMedia)(
 				entry.input.filePath,
@@ -197,13 +250,16 @@ export class StoryService {
 					account: entry.view.account,
 					mediaId: null,
 					errorCode: null,
+					...(entry.input.feedPost ? { feedPost: entry.input.feedPost } : {}),
 				},
 			};
 			if (this.#options.store.find(record.keyHash))
 				throw new StoryError("IDEMPOTENCY_CONFLICT", "操作IDはすでに使用されています");
 			await this.#options.store.save(record);
 			this.#previews.delete(id);
-			this.#track(this.#execute(profile, record, entry.media, entry.input.caption, entry.view.account));
+			this.#track(
+				this.#execute(profile, record, entry.media, entry.input.caption, entry.view.account, entry.input.feedPost),
+			);
 			return record.job;
 		});
 	}
@@ -235,6 +291,7 @@ export class StoryService {
 					// 既存の通常公開台帳と同じハッシュを維持する。
 					...(parsed.data.audience === "close_friends" ? { audience: "close_friends" } : {}),
 					...(parsed.data.caption !== "" ? { caption: parsed.data.caption } : {}),
+					...(parsed.data.feedPost ? { feedPost: parsed.data.feedPost } : {}),
 				}),
 			);
 			const previous = this.#options.store.find(keyHash);
@@ -243,6 +300,8 @@ export class StoryService {
 					throw new StoryError("IDEMPOTENCY_CONFLICT", "同じキーを異なる要求に再利用できません");
 				return previous.job;
 			}
+			if (parsed.data.feedPost && this.#options.store.findFeedPost(profileName, parsed.data.feedPost.mediaId))
+				throw new StoryError("IDEMPOTENCY_CONFLICT", "この元投稿の共有はすでに受理されています");
 			if (!mediaReady(profile)) throw new StoryError("SESSION_NOT_READY", "ブラウザセッションの準備ができていません");
 			const id = randomUUID();
 			const media = await (this.#options.prepare ?? prepareMedia)(
@@ -267,6 +326,7 @@ export class StoryService {
 					account: null,
 					mediaId: null,
 					errorCode: null,
+					...(parsed.data.feedPost ? { feedPost: parsed.data.feedPost } : {}),
 				},
 			};
 			try {
@@ -275,7 +335,7 @@ export class StoryService {
 				await fs.unlink(media.assetPath).catch(() => undefined);
 				throw error;
 			}
-			this.#track(this.#execute(profile, record, media, parsed.data.caption));
+			this.#track(this.#execute(profile, record, media, parsed.data.caption, undefined, parsed.data.feedPost));
 			return record.job;
 		});
 	}
@@ -292,6 +352,7 @@ export class StoryService {
 		media: Awaited<ReturnType<typeof prepareMedia>>,
 		caption: string,
 		expectedAccount?: StoryAccount,
+		feedPost?: StoryFeedPostReference,
 	): Promise<void> {
 		let record = initial;
 		const update = async (patch: Partial<StoryJob>) => {
@@ -320,6 +381,7 @@ export class StoryService {
 						const account = await publisher.getAccount();
 						if (expectedAccount && (expectedAccount.id !== account.id || expectedAccount.username !== account.username))
 							throw new StoryError("ACCOUNT_CHANGED", "プレビューのアカウントが変更されました。再確認してください");
+						await this.#feedReference(publisher, feedPost, media);
 						await update({ state: "uploading", account });
 						check();
 						await publisher.upload(media);
@@ -330,7 +392,9 @@ export class StoryService {
 						// 公開要求の前に必ず永続化する。ここから先の不明な結果は再送しない。
 						await update({ state: "publishing" });
 						check();
-						const mediaId = await publisher.publish(account, record.job.audience, caption);
+						const mediaId = feedPost
+							? await publisher.publish(account, record.job.audience, caption, feedPost)
+							: await publisher.publish(account, record.job.audience, caption);
 						if (!/^\d+$/.test(mediaId)) throw new StoryError("PUBLICATION_UNKNOWN", "公開結果を確認できません");
 						await update({ state: "published", mediaId });
 					} finally {
