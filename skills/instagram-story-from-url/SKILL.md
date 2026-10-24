@@ -39,6 +39,8 @@ python '<skill-dir>/scripts/story_from_url.py' --check --start-relay --profile a
 
 ## アカウント切り替え
 
+このPCでは「オタク垢」は `@example.account1`（`account1`）を指す。追加登録した `@example.account2` は `account2`。呼称で投稿先を指定された場合も、公開前に一覧・プレビューの実アカウントと照合する。
+
 `--list-accounts --start-relay`で登録済みアカウントと現在の選択を表示する。`--use-account '@username'`または`--use-account account2`で実ログイン先を照合して次の投稿先を保存する。いずれもInstagramへのアップロード・公開は行わない。新規操作は`--profile`省略時に選択済みの投稿先を使い、明示した`--profile`はその操作で優先する。既存の操作IDの再開では操作JSONの元のプロファイルを優先し、現在の選択で置き換えない。アカウント管理とURL投稿は別コマンドで行う。
 
 別アカウントは専用プロファイルへ手動ログインし、別の`private_sessions`ファイルへ移行してから、Relayリポジトリの`pnpm accounts:register --name account2 --session-file private_sessions/account2.json`で照合・登録する。既存アカウントを上書きしない。追加後は処理中の投稿がないことを確認してRelayを正常終了・再起動する。詳細は`docs/accounts.md`。登録・切り替えも通常運用ではブラウザーを起動しない。
