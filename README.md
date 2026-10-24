@@ -4,7 +4,7 @@
 
 ## 重要な注意
 
-Instagramの利用規約は、明示的な許可のない自動アクセスや情報収集を禁止しています。このプロジェクトは、許可済みの試験環境・所有アカウントでの研究用途を想定しており、規約準拠やアカウント停止回避を保証しません。検知回避、CAPTCHA回避、プロキシローテーション、ストーリーズ以外の投稿、いいね、フォロー、コメント投稿は実装しません。DM取得・テキスト送信は明示的に有効化する別サービスです。
+Instagramの利用規約は、明示的な許可のない自動アクセスや情報収集を禁止しています。このプロジェクトは、許可済みの試験環境・所有アカウントでの研究用途を想定しており、規約準拠やアカウント停止回避を保証しません。検知回避、CAPTCHA回避、プロキシローテーション、ストーリーズ以外の投稿、いいね、フォローは実装しません。コメント送信は明示指定された自分のストーリーへの文面に限ります。DM取得・テキスト送信は明示的に有効化する別サービスです。
 
 `safe` はCookie、CSRF値、LSD、認証ヘッダーをNode.jsやHTTPクライアントへ渡さず、任意の内部APIを公開しない設計を表します。
 
@@ -140,7 +140,7 @@ Dashboardには素材・実ログインアカウント・通常公開／親し�
 ```powershell
 $headers = @{ Authorization = "Bearer $env:INSTAGRAM_RELAY_API_TOKEN"; "Idempotency-Key" = "story-20261002-001" }
 # 複数プロファイルがある場合は $headers["x-profile-name"] = "account1" も指定
-$body = @{ filePath = "C:/Users/you/Videos/Instagram/story.mp4"; audience = "close_friends"; caption = "コメントの文面" } | ConvertTo-Json
+$body = @{ filePath = "C:/Users/you/Videos/Instagram/story.mp4"; audience = "close_friends" } | ConvertTo-Json
 $job = Invoke-RestMethod -Method Post -Headers $headers -ContentType "application/json" -Body $body http://127.0.0.1:3000/v1/stories
 Invoke-RestMethod -Headers $headers "http://127.0.0.1:3000/v1/story-jobs/$($job.data.id)"
 ```
@@ -151,7 +151,9 @@ JPEG・PNGは8MiB以下、MP4は100MiB以下、H.264映像と任意のAAC音声�
 
 任意の`caption`で投稿データのキャプションを指定できます（UTF-16で2200文字以内、既定値は空文字）。画像・動画上に文字は描画しません。文面を指定した場合は公開応答の`media.caption.text`との一致を確認し、根拠がなければ`unknown`にします。キャプション付き投稿の実アカウント検証は未実施です。
 
-公開範囲はジョブの`audience`に保存します。同じキーで素材パス・公開範囲・キャプションを変えると`409`になります。本文はジョブ応答・Relayログに含めず、重複判定にはハッシュを使います。旧台帳は通常公開・キャプションなしとして読み込みます。YouTube／TikTokのURLから投稿する個人SkillはGoogle Driveの`Agent/Skills/instagram-story-from-url`にあり、yt-dlpで配信元のH.264/AAC MP4を選び、ffprobeで検証します。Skillでの文面指定は`--caption "コメントの文面"`です。
+公開範囲はジョブの`audience`に保存します。同じキーで素材パス・公開範囲・キャプションを変えると`409`になります。本文はジョブ応答・Relayログに含めず、重複判定にはハッシュを使います。旧台帳は通常公開・キャプションなしとして読み込みます。YouTube／TikTokのURLから投稿する個人SkillはGoogle Driveの`Agent/Skills/instagram-story-from-url`にあり、yt-dlpで配信元のH.264/AAC MP4を選び、ffprobeで検証します。Skillでコメント欄へ文面を送る指定は`--comment "コメントの文面"`です。`caption`ではコメント欄へ書き込めません。
+
+`POST /v1/story-jobs/:id/comments` は公開済みの自分のストーリーだけに、`{ "text": "文面" }`を1回送信します。専用のIdempotency-Keyと元のプロファイルを指定します。アカウント・公開範囲・メディアID・既存コメントを照合し、応答と読み戻しが一致した場合だけ`comment.state: completed`になります。本文はジョブ応答へ返さず、結果不明では再送しません。親しい友達でのコメント送信は現在成功未確認です。Skillはコメントの成否とは独立して指定済みハイライトを処理します。
 
 ジョブは`queued → uploading → publishing → published`と進みます。公開前の失敗は`failed`、公開後の応答喪失などは`unknown`です。アップロードだけでは成功としません。同じプロファイル・キー・パスの再要求は既存ジョブを返し、異なるパスで同じキーを使うと`409`になります。同じパスのファイルを差し替えても、同じキーでは新規投稿しません。
 

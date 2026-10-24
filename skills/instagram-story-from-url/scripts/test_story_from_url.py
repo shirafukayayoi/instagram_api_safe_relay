@@ -139,7 +139,7 @@ class StoryTests(unittest.TestCase):
                              'account1', 'same-key:comment', {'text': self.data['comment']}))
             self.assertFalse(any(call.args[0] == 'stories' for call in api.call_args_list))
 
-    def test_unknown_comment_does_not_register_highlight(self):
+    def test_unknown_comment_still_registers_requested_highlight_without_reposting(self):
         self.data.update(job=JOB, comment='文面', highlightIntent={'name': 'idol', 'id': None})
         self.args.comment = '文面'
         published = {'state': 'published', 'audience': 'close_friends', 'mediaId': '123'}
@@ -147,7 +147,7 @@ class StoryTests(unittest.TestCase):
                 {'data': {**published, 'comment': {'state': 'unknown'}}}]), patch.object(story, 'register_highlight') as register:
             with self.assertRaises(RuntimeError):
                 self.run_story()
-            register.assert_not_called()
+            register.assert_called_once()
 
     def test_preview_never_creates_publication_and_reuses_same_preview(self):
         self.args.preview_only = True

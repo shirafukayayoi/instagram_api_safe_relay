@@ -82,7 +82,7 @@ def main():
     if not all((args.url, args.audience, args.operation)):
         parser.error("投稿・取得にはURL、--audience、--operationが必要です")
     if any(len(text.encode("utf-16-le")) // 2 > 2200 for text in (args.caption, args.comment)):
-        parser.error("captionはUTF-16で2200文字以内にしてください")
+        parser.error("caption・commentはUTF-16で2200文字以内にしてください")
     if args.highlight_only and not (args.highlight or args.highlight_id):
         parser.error("--highlight-onlyには--highlightまたは--highlight-idが必要です")
     if args.highlight_id and not args.highlight_id.isdecimal():
@@ -201,13 +201,17 @@ def poll_job(args, directory, data):
         data["result"] = result
         save(ledger, data)
         if result["state"] in {"published", "failed", "unknown"}:
+            comment_error = None
             if result["state"] == "published" and data.get("comment") and not getattr(args, "preview_only", False):
-                result = api("story-jobs/" + data["job"] + "/comments", args.profile, data["key"] + ":comment",
-                             {"text": data["comment"]})["data"]
-                data["result"] = result
-                save(ledger, data)
-                if result.get("comment", {}).get("state") != "completed":
-                    raise RuntimeError("コメント送信の成功を確認できません。再送せず同じ操作IDで照会してください")
+                try:
+                    result = api("story-jobs/" + data["job"] + "/comments", args.profile, data["key"] + ":comment",
+                                 {"text": data["comment"]})["data"]
+                    data["result"] = result
+                    save(ledger, data)
+                    if result.get("comment", {}).get("state") != "completed":
+                        comment_error = "コメント送信の成功を確認できません。再送せず同じ操作IDで照会してください"
+                except RuntimeError as error:
+                    comment_error = str(error)
             print(json.dumps(result, ensure_ascii=False))
             if result["state"] != "published":
                 raise RuntimeError("公開成功を確認できません。再投稿せずInstagram上で確認してください")
@@ -217,6 +221,8 @@ def poll_job(args, directory, data):
                 raise RuntimeError("投稿IDまたは公開範囲の確認が取れません。再投稿せずInstagram上で確認してください")
             if data.get("highlightIntent") and not getattr(args, "preview_only", False):
                 register_highlight(args, directory, data)
+            if comment_error:
+                raise RuntimeError(comment_error)
             return
         if time.monotonic() >= deadline:
             print("処理継続中です。同じ操作IDで状態確認を再開してください: " + data["job"])
