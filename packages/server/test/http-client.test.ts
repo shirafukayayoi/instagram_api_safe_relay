@@ -339,7 +339,7 @@ describe("自分のストーリーのコメント欄", () => {
 			ok(own),
 			ok({ reel: { user: { pk: "123" }, items: [story] } }),
 			ok({ comments: [], has_more_comments: false }),
-			ok({ comment }),
+			ok({ comment_dict: comment }),
 			ok({ comments: [comment], has_more_comments: false }),
 		]);
 		const client = await f.open();
@@ -351,12 +351,47 @@ describe("自分のストーリーのコメント欄", () => {
 		expect(before).toHaveBeenCalledTimes(1);
 		const posts = f.fetcher.mock.calls.filter(([, o]) => o?.method === "POST");
 		expect(posts).toHaveLength(1);
-		expect(posts[0]?.[0]).toBe("https://i.instagram.com/api/v1/media/999_123/comment/");
+		expect(posts[0]?.[0]).toBe("https://i.instagram.com/api/v1/media/story_comment/post/");
+		const reads = f.fetcher.mock.calls.filter(([url]) => String(url).includes("/story_comment/fetch/"));
+		expect(reads).toHaveLength(2);
+		expect(new URL(String(reads[0]?.[0])).searchParams.get("media_id")).toBe("999_123");
 		const body = posts[0]?.[1]?.body as URLSearchParams;
-		expect(JSON.parse((body.get("signed_body") ?? "").replace(/^SIGNATURE\./, ""))).toMatchObject({
+		expect(body.has("signed_body")).toBe(false);
+		expect(Object.fromEntries(body)).toEqual({
 			comment_text: "文面",
-			comment_creation_key: creationKey,
+			media_id: "999_123",
 		});
+	});
+	it("通常コメントの応答をストーリーの成功と誤認せず、同じ要求も再送しない", async () => {
+		const f = await fixture([
+			ok(own),
+			ok({ reel: { user: { pk: "123" }, items: [story] } }),
+			ok({ comments: [], has_more_comments: false }),
+			ok({ comment }),
+			ok({ comments: [], has_more_comments: false }),
+			ok({ comments: [], has_more_comments: false }),
+		]);
+		const client = await f.open();
+		await client.resolveOwnStory(account, "close_friends", "999", 100, 200, signal());
+		const beforeSend = vi.fn(async () => {});
+		for (let attempt = 0; attempt < 2; attempt++)
+			await expect(client.commentOwnStory("999", "文面", creationKey, beforeSend, signal())).rejects.toMatchObject({
+				code: "COMMENT_UNKNOWN",
+			});
+		expect(beforeSend).toHaveBeenCalledTimes(1);
+		expect(f.fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+	});
+	it("受付応答だけの場合も、専用欄で自分の同文コメントを確認してから成功にする", async () => {
+		const f = await fixture([
+			ok(own),
+			ok({ reel: { user: { pk: "123" }, items: [story] } }),
+			ok({ comments: [], has_more_comments: false }),
+			ok({}),
+			ok({ comments: [comment], has_more_comments: false }),
+		]);
+		const client = await f.open();
+		await client.resolveOwnStory(account, "close_friends", "999", 100, 200, signal());
+		expect(await client.commentOwnStory("999", "文面", creationKey, async () => {}, signal())).toBe("777");
 	});
 	it("同じ本文があれば再送せず、照合していない他のメディアへ送らない", async () => {
 		const f = await fixture([

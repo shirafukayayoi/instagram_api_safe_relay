@@ -3,9 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type {
 	CreateStoryInput,
+	StoryAccount,
 	StoryFeedPost,
 	StoryFeedPostReference,
-	StoryAccount,
 	StoryJob,
 	StoryPreview,
 	StoryPreviewStatus,
@@ -427,6 +427,7 @@ export class StoryService {
 						}
 						const pending = {
 							state: "sending" as const,
+							transport: "story_comment" as const,
 							requestHash,
 							creationKey: randomUUID(),
 							commentId: null,

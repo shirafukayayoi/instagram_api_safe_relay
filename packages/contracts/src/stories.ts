@@ -70,6 +70,7 @@ export const storyJobSchema = z.strictObject({
 	comment: z
 		.strictObject({
 			state: z.enum(["sending", "completed", "unknown"]),
+			transport: z.literal("story_comment").optional(),
 			requestHash: z.string().regex(/^[a-f0-9]{64}$/),
 			creationKey: z.string().uuid(),
 			commentId: z
@@ -78,6 +79,17 @@ export const storyJobSchema = z.strictObject({
 				.nullable(),
 			createdAt: z.string().datetime(),
 			updatedAt: z.string().datetime(),
+			// 旧経路の明確な拒否を手動照合した場合の記録。自動再送の許可には使わない。
+			recovery: z
+				.strictObject({
+					previousTransport: z.literal("legacy_media"),
+					previousState: z.literal("unknown"),
+					previousUpdatedAt: z.string().datetime(),
+					httpStatus: z.literal(400),
+					errorKey: z.literal("comment_not_in_comment_audience"),
+					verifiedAt: z.string().datetime(),
+				})
+				.optional(),
 		})
 		.optional(),
 	recovery: z

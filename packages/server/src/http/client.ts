@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Highlight, StoryAccount, StoryFeedPostReference, StoryFeedPost } from "instagram-api-safe-contracts";
+import type { Highlight, StoryAccount, StoryFeedPost, StoryFeedPostReference } from "instagram-api-safe-contracts";
 import { z } from "zod";
 import { StoryError } from "../stories/errors.js";
 
@@ -350,7 +350,7 @@ export class InstagramHttpClient {
 			throw new StoryError("MEDIA_NOT_ALLOWED", "自分のストーリーの照合が必要です");
 		const data = await this.#json(
 			"i.instagram.com",
-			`/api/v1/media/${mediaId}/comments/`,
+			`/api/v1/media/story_comment/fetch/?${new URLSearchParams({ media_id: `${mediaId}_${this.#session.account.id}` })}`,
 			signal,
 			undefined,
 			{},
@@ -383,40 +383,32 @@ export class InstagramHttpClient {
 		const existing = await this.findOwnStoryComment(mediaId, text, signal);
 		if (existing) return existing;
 		if (this.#commentAttempts.has(creationKey)) throw new StoryError("COMMENT_UNKNOWN", "コメント要求は再送しません");
-		// 自分のストーリーの固定コメント先だけを使用する。本文は応答やログへ出さない。
-		const body = {
+		// 専用経路はアプリと同じ2項目に限定する。重複防止は永続台帳とローカルの操作IDで行う。
+		const body = new URLSearchParams({
 			comment_text: text,
 			media_id: `${mediaId}_${this.#session.account.id}`,
-			_uid: this.#session.account.id,
-			_uuid: this.#session.mobile?.uuid,
-			device_id: this.#session.mobile?.androidId,
-			container_module: "feed_timeline",
-			delivery_class: "organic",
-			feed_position: "0",
-			idempotence_token: creationKey,
-			comment_creation_key: creationKey,
-		};
+		});
 		await beforeSend();
 		this.#commentAttempts.add(creationKey);
 		const data = await this.#json(
 			"i.instagram.com",
-			`/api/v1/media/${mediaId}_${this.#session.account.id}/comment/`,
+			"/api/v1/media/story_comment/post/",
 			signal,
-			new URLSearchParams({ signed_body: `SIGNATURE.${JSON.stringify(body)}` }),
+			body,
 			{},
 			"json",
 			true,
 		);
-		const comment = object(data.comment);
+		const comment = object(data.comment_dict);
 		const id = numericId(comment.pk);
+		const found = await this.findOwnStoryComment(mediaId, text, signal);
 		if (
-			!id ||
-			numericId(object(comment.user).pk) !== this.#session.account.id ||
-			comment.text !== text ||
-			(await this.findOwnStoryComment(mediaId, text, signal)) !== id
+			!found ||
+			(id !== null &&
+				(numericId(object(comment.user).pk) !== this.#session.account.id || comment.text !== text || found !== id))
 		)
 			throw new StoryError("COMMENT_UNKNOWN", "コメント送信後の照合ができません。再送しません");
-		return id;
+		return found;
 	}
 	async getAccount(signal: AbortSignal): Promise<StoryAccount> {
 		// Web用の固定読み取りAPI。編集・保存の要求は送らない。
