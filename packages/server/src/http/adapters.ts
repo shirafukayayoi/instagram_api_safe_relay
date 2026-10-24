@@ -26,6 +26,11 @@ export const createHttpStoryPublisher = async (
 	};
 	return {
 		supportsFeedPost: feedPostSharingEnabled,
+		resolveOwnStory: (account, audience, mediaId, after, before) =>
+			client.resolveOwnStory(account, audience, mediaId, after, before, signal),
+		findOwnStoryComment: (mediaId, text) => client.findOwnStoryComment(mediaId, text, signal),
+		commentOwnStory: (mediaId, text, creationKey, beforeSend) =>
+			client.commentOwnStory(mediaId, text, creationKey, beforeSend, signal),
 		checkFeedPostSession: async () => {
 			check();
 			await client.getMobileAccount(signal);

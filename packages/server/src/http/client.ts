@@ -71,6 +71,8 @@ export class InstagramHttpClient {
 	#closed = false;
 	#wwwClaim = "0";
 	#tokens: { lsd: string; dtsg: string; av: string } | undefined;
+	readonly #commentTargets = new Set<string>();
+	readonly #commentAttempts = new Set<string>();
 	private constructor(session: Session, file: string, options: ClientOptions) {
 		this.#session = session;
 		this.#file = file;
@@ -301,6 +303,120 @@ export class InstagramHttpClient {
 		if (numericId(user.pk) !== this.#session.account.id || user.username !== this.#session.account.username)
 			throw new StoryError("ACCOUNT_CHANGED", "モバイルAPIの投稿先アカウントが一致しません");
 		return { ...this.#session.account };
+	}
+	async resolveOwnStory(
+		account: StoryAccount,
+		audience: "all" | "close_friends",
+		mediaId: string | null,
+		after: number,
+		before: number,
+		signal: AbortSignal,
+	): Promise<string> {
+		const current = await this.getMobileAccount(signal);
+		if (current.id !== account.id || current.username !== account.username)
+			throw new StoryError("ACCOUNT_CHANGED", "コメント先のアカウントが一致しません");
+		const data = await this.#json(
+			"i.instagram.com",
+			`/api/v1/feed/user/${account.id}/story/`,
+			signal,
+			undefined,
+			{},
+			"json",
+			true,
+		);
+		const reel = object(data.reel);
+		if (numericId(object(reel.user).pk) !== account.id || !Array.isArray(reel.items))
+			throw new StoryError("COMMENT_UNAVAILABLE", "自分のストーリー一覧を確認できません");
+		const candidates = reel.items.map(object).filter((item) => {
+			const id = numericId(item.pk);
+			return id && (mediaId ? id === mediaId : Number(item.taken_at) >= after && Number(item.taken_at) <= before);
+		});
+		const item = candidates[0];
+		if (
+			candidates.length !== 1 ||
+			!item ||
+			(item.user && numericId(object(item.user).pk) !== account.id) ||
+			(audience === "close_friends" ? item.audience !== "besties" : item.audience === "besties") ||
+			item.comments_disabled === true ||
+			item.commenting_disabled_for_viewer === true
+		)
+			throw new StoryError("COMMENT_UNAVAILABLE", "コメント先の所有者・公開範囲・コメント許可を照合できません");
+		this.#commentTargets.add(String(item.pk));
+		return String(item.pk);
+	}
+	async findOwnStoryComment(mediaId: string, text: string, signal: AbortSignal): Promise<string | null> {
+		validateId(mediaId);
+		if (!this.#commentTargets.has(mediaId))
+			throw new StoryError("MEDIA_NOT_ALLOWED", "自分のストーリーの照合が必要です");
+		const data = await this.#json(
+			"i.instagram.com",
+			`/api/v1/media/${mediaId}/comments/`,
+			signal,
+			undefined,
+			{},
+			"json",
+			true,
+		);
+		if (!Array.isArray(data.comments) || data.has_more_comments !== false || data.has_more_headload_comments === true)
+			throw new StoryError("COMMENT_UNAVAILABLE", "コメントの全件照合ができません");
+		const matches = data.comments
+			.map(object)
+			.filter(
+				(c) =>
+					object(c.user).pk !== undefined &&
+					numericId(object(c.user).pk) === this.#session.account.id &&
+					c.text === text,
+			);
+		if (matches.length > 1) throw new StoryError("COMMENT_UNKNOWN", "同じコメントが複数あり、一意に確認できません");
+		return matches.length === 1 ? numericId(matches[0]?.pk) : null;
+	}
+	async commentOwnStory(
+		mediaId: string,
+		text: string,
+		creationKey: string,
+		beforeSend: () => Promise<void>,
+		signal: AbortSignal,
+	): Promise<string> {
+		validateId(mediaId);
+		if (!text || text.length > 2200 || !z.string().uuid().safeParse(creationKey).success)
+			throw new StoryError("INVALID_INPUT", "コメント本文と操作IDが必要です");
+		const existing = await this.findOwnStoryComment(mediaId, text, signal);
+		if (existing) return existing;
+		if (this.#commentAttempts.has(creationKey)) throw new StoryError("COMMENT_UNKNOWN", "コメント要求は再送しません");
+		// 自分のストーリーの固定コメント先だけを使用する。本文は応答やログへ出さない。
+		const body = {
+			comment_text: text,
+			media_id: `${mediaId}_${this.#session.account.id}`,
+			_uid: this.#session.account.id,
+			_uuid: this.#session.mobile?.uuid,
+			device_id: this.#session.mobile?.androidId,
+			container_module: "feed_timeline",
+			delivery_class: "organic",
+			feed_position: "0",
+			idempotence_token: creationKey,
+			comment_creation_key: creationKey,
+		};
+		await beforeSend();
+		this.#commentAttempts.add(creationKey);
+		const data = await this.#json(
+			"i.instagram.com",
+			`/api/v1/media/${mediaId}_${this.#session.account.id}/comment/`,
+			signal,
+			new URLSearchParams({ signed_body: `SIGNATURE.${JSON.stringify(body)}` }),
+			{},
+			"json",
+			true,
+		);
+		const comment = object(data.comment);
+		const id = numericId(comment.pk);
+		if (
+			!id ||
+			numericId(object(comment.user).pk) !== this.#session.account.id ||
+			comment.text !== text ||
+			(await this.findOwnStoryComment(mediaId, text, signal)) !== id
+		)
+			throw new StoryError("COMMENT_UNKNOWN", "コメント送信後の照合ができません。再送しません");
+		return id;
 	}
 	async getAccount(signal: AbortSignal): Promise<StoryAccount> {
 		// Web用の固定読み取りAPI。編集・保存の要求は送らない。

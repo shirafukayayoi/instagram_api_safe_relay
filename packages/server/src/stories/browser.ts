@@ -11,6 +11,20 @@ export type StoryPublisher = {
 	getAccount: () => Promise<StoryAccount>;
 	supportsFeedPost?: boolean;
 	checkFeedPostSession?: () => Promise<void>;
+	resolveOwnStory?: (
+		account: StoryAccount,
+		audience: "all" | "close_friends",
+		mediaId: string | null,
+		after: number,
+		before: number,
+	) => Promise<string>;
+	findOwnStoryComment?: (mediaId: string, text: string) => Promise<string | null>;
+	commentOwnStory?: (
+		mediaId: string,
+		text: string,
+		creationKey: string,
+		beforeSend: () => Promise<void>,
+	) => Promise<string>;
 	getFeedPost?: (shortcode: string) => Promise<StoryFeedPost>;
 	getFeedImage?: (shortcode: string) => Promise<{ bytes: Uint8Array; mimeType: string }>;
 	upload: (media: StoryMedia) => Promise<void>;

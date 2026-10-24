@@ -39,6 +39,8 @@ export const storyErrorCodes = [
 	"UPLOAD_FAILED",
 	"PUBLICATION_UNKNOWN",
 	"FEED_SHARE_UNAVAILABLE",
+	"COMMENT_UNAVAILABLE",
+	"COMMENT_UNKNOWN",
 	"INTERRUPTED",
 	"STORAGE_UNAVAILABLE",
 	"NOT_FOUND",
@@ -47,6 +49,13 @@ export const storyErrorCodes = [
 	"PREVIEW_CHANGED",
 ] as const;
 export const storyAccountSchema = z.strictObject({ id: z.string().regex(/^\d+$/), username: z.string().min(1) });
+export const storyCommentInputSchema = z.strictObject({
+	text: z.string().min(1).max(2200),
+	mediaId: z
+		.string()
+		.regex(/^[1-9][0-9]{0,29}$/)
+		.optional(),
+});
 export const storyJobSchema = z.strictObject({
 	id: z.string().uuid(),
 	profile: z.string().min(1),
@@ -58,6 +67,26 @@ export const storyJobSchema = z.strictObject({
 	mediaId: z.string().nullable(),
 	errorCode: z.enum(storyErrorCodes).nullable(),
 	feedPost: storyFeedPostReferenceSchema.optional(),
+	comment: z
+		.strictObject({
+			state: z.enum(["sending", "completed", "unknown"]),
+			requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+			creationKey: z.string().uuid(),
+			commentId: z
+				.string()
+				.regex(/^[0-9]+$/)
+				.nullable(),
+			createdAt: z.string().datetime(),
+			updatedAt: z.string().datetime(),
+		})
+		.optional(),
+	recovery: z
+		.strictObject({
+			fromState: z.literal("unknown"),
+			previousErrorCode: z.enum(storyErrorCodes).nullable(),
+			verifiedAt: z.string().datetime(),
+		})
+		.optional(),
 	removal: z
 		.strictObject({ mediaId: z.string().regex(/^[1-9][0-9]{0,29}$/), verifiedAt: z.string().datetime() })
 		.optional(),

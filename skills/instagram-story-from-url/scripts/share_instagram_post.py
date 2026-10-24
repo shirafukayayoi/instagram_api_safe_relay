@@ -70,6 +70,11 @@ def run(args, directory):
         if data.get('highlightIntent') and data['highlightIntent'] != target:
             raise RuntimeError('同じ操作IDのハイライト登録先を変更できません')
         data['highlightIntent'] = target
+    comment = getattr(args, 'comment', '')
+    if data.get('comment', '') != comment and file.exists():
+        raise RuntimeError('同じ操作IDのコメント本文を変更できません')
+    if comment:
+        data['comment'] = comment
     save(file, data)
     if data.get('job'):
         if args.start_relay:
@@ -113,6 +118,7 @@ def main():
     parser.add_argument('--operation', type=uuid.UUID, required=True)
     parser.add_argument('--profile')
     parser.add_argument('--caption', default='')
+    parser.add_argument('--comment', default='', help='ストーリーのコメント欄に投稿する文面')
     parser.add_argument('--preview-only', action='store_true')
     parser.add_argument('--start-relay', action='store_true')
     target = parser.add_mutually_exclusive_group()
@@ -120,7 +126,7 @@ def main():
     target.add_argument('--highlight-id')
     args = parser.parse_args()
     canonical_url(args.url)
-    if len(args.caption.encode('utf-16-le')) // 2 > 2200:
+    if any(len(text.encode('utf-16-le')) // 2 > 2200 for text in (args.caption, args.comment)):
         parser.error('キャプションはUTF-16で2200文字以内です')
     if args.highlight_id and not args.highlight_id.isdecimal():
         parser.error('ハイライトIDは数値で指定してください')

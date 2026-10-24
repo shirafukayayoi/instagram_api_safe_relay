@@ -10,7 +10,7 @@ import type {
 	StoryPreview,
 	StoryPreviewStatus,
 } from "instagram-api-safe-contracts";
-import { confirmStoryInputSchema, createStoryInputSchema } from "instagram-api-safe-contracts";
+import { confirmStoryInputSchema, createStoryInputSchema, storyCommentInputSchema } from "instagram-api-safe-contracts";
 import { mediaReady, withMediaSession } from "../media-session.js";
 import type { RelayProfile } from "../types.js";
 import { SerialQueue } from "../utils/queue.js";
@@ -352,6 +352,112 @@ export class StoryService {
 		const record = this.#options.store.get(id);
 		if (!record || record.job.profile !== profileName) throw new StoryError("NOT_FOUND", "ジョブが見つかりません");
 		return record.job;
+	}
+	comment(profileName: string, id: string, key: string | undefined, input: unknown): Promise<StoryJob> {
+		return this.#intake.run(async () => {
+			const profile = this.#profile(profileName);
+			const parsed = storyCommentInputSchema.safeParse(input);
+			if (!parsed.success || !key || !/^[A-Za-z0-9._:-]{1,128}$/.test(key))
+				throw new StoryError("INVALID_INPUT", "コメント本文とIdempotency-Keyが必要です");
+			const stored = this.#options.store.get(id);
+			if (
+				!stored ||
+				stored.job.profile !== profileName ||
+				!stored.job.account ||
+				stored.job.removal ||
+				!["published", "unknown"].includes(stored.job.state)
+			)
+				throw new StoryError("INVALID_INPUT", "自分の公開済みストーリーが必要です");
+			let record = stored;
+			const requestHash = hash(JSON.stringify({ id, text: parsed.data.text }));
+			if (record.job.comment?.requestHash && record.job.comment.requestHash !== requestHash)
+				throw new StoryError("IDEMPOTENCY_CONFLICT", "同じストーリーへのコメント本文を変更できません");
+			if (record.job.comment?.state === "completed") return record.job;
+			const update = async (patch: Partial<StoryJob>) => {
+				if (!record) throw new StoryError("NOT_FOUND", "台帳がありません");
+				record = { ...record, job: { ...record.job, ...patch, updatedAt: new Date().toISOString() } };
+				await this.#options.store.save(record);
+			};
+			return withMediaSession(
+				profile,
+				async (session) => {
+					const controller = new AbortController();
+					this.#controllers.add(controller);
+					const timer = setTimeout(() => controller.abort(), this.#options.settings.operationTimeoutMs);
+					let publisher: StoryPublisher | undefined;
+					try {
+						publisher = await session.createPublisher(controller.signal);
+						if (!publisher.resolveOwnStory || !publisher.findOwnStoryComment || !publisher.commentOwnStory)
+							throw new StoryError("COMMENT_UNAVAILABLE", "この接続ではストーリーのコメント欄に対応していません");
+						const original = record.job;
+						const account = original.account;
+						if (!account) throw new StoryError("ACCOUNT_CHANGED", "投稿時のアカウントが必要です");
+						const mediaId = await publisher.resolveOwnStory(
+							account,
+							original.audience,
+							original.state === "unknown" ? null : original.mediaId,
+							Date.parse(original.createdAt) / 1000 - 5,
+							Date.parse(original.updatedAt) / 1000 + 30,
+						);
+						if (
+							(original.mediaId && mediaId !== original.mediaId) ||
+							(parsed.data.mediaId && mediaId !== parsed.data.mediaId)
+						)
+							throw new StoryError("MEDIA_NOT_ALLOWED", "コメント先が指定したストーリーと一致しません");
+						// 実際の公開を読み戻しで確認する。過去の結果不明は回復履歴に残す。
+						if (original.state === "unknown")
+							await update({
+								state: "published",
+								mediaId,
+								errorCode: null,
+								recovery: {
+									fromState: "unknown",
+									previousErrorCode: original.errorCode,
+									verifiedAt: new Date().toISOString(),
+								},
+							});
+						const previous = record.job.comment;
+						const now = new Date().toISOString();
+						if (previous) {
+							const found = await publisher.findOwnStoryComment(mediaId, parsed.data.text);
+							await update({
+								comment: { ...previous, state: found ? "completed" : "unknown", commentId: found, updatedAt: now },
+							});
+							return record.job;
+						}
+						const pending = {
+							state: "sending" as const,
+							requestHash,
+							creationKey: randomUUID(),
+							commentId: null,
+							createdAt: now,
+							updatedAt: now,
+						};
+						const commentId = await publisher.commentOwnStory(mediaId, parsed.data.text, pending.creationKey, () =>
+							update({ comment: pending }),
+						);
+						await update({
+							comment: { ...pending, state: "completed", commentId, updatedAt: new Date().toISOString() },
+						});
+						return record.job;
+					} catch (error) {
+						if (record.job.comment?.state === "sending") {
+							await update({
+								comment: { ...record.job.comment, state: "unknown", updatedAt: new Date().toISOString() },
+							});
+							return record.job;
+						}
+						throw error;
+					} finally {
+						clearTimeout(timer);
+						controller.abort();
+						this.#controllers.delete(controller);
+						await publisher?.close().catch(() => undefined);
+					}
+				},
+				{ publisher: this.#options.publisher },
+			);
+		});
 	}
 
 	async #execute(

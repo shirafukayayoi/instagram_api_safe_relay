@@ -128,6 +128,27 @@ class StoryTests(unittest.TestCase):
             self.assertEqual(api.call_args_list[0].args[3]["caption"], self.data["caption"])
             self.assertEqual(json.loads((self.directory / "operation.json").read_text(encoding="utf-8"))["job"], JOB)
 
+    def test_comment_is_posted_after_publication_without_another_story(self):
+        self.data.update(job=JOB, comment='コメント欄への文面')
+        self.args.comment = self.data['comment']
+        published = {'state': 'published', 'audience': 'close_friends', 'mediaId': '123'}
+        with patch.object(story, 'api', side_effect=[{'data': published},
+                {'data': {**published, 'comment': {'state': 'completed', 'commentId': '777'}}}]) as api:
+            self.run_story()
+            self.assertEqual(api.call_args_list[1].args, ('story-jobs/' + JOB + '/comments',
+                             'account1', 'same-key:comment', {'text': self.data['comment']}))
+            self.assertFalse(any(call.args[0] == 'stories' for call in api.call_args_list))
+
+    def test_unknown_comment_does_not_register_highlight(self):
+        self.data.update(job=JOB, comment='文面', highlightIntent={'name': 'idol', 'id': None})
+        self.args.comment = '文面'
+        published = {'state': 'published', 'audience': 'close_friends', 'mediaId': '123'}
+        with patch.object(story, 'api', side_effect=[{'data': published},
+                {'data': {**published, 'comment': {'state': 'unknown'}}}]), patch.object(story, 'register_highlight') as register:
+            with self.assertRaises(RuntimeError):
+                self.run_story()
+            register.assert_not_called()
+
     def test_preview_never_creates_publication_and_reuses_same_preview(self):
         self.args.preview_only = True
         view = {"id": JOB, "profile": "account1", "audience": "close_friends"}

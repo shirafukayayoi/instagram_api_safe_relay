@@ -64,6 +64,14 @@ export class StoryStore {
 				);
 				if (name !== `${record.job.id}.json` || this.#records.has(record.keyHash)) throw new Error("INVALID_STORE");
 				this.#records.set(record.keyHash, record);
+				if (record.job.comment?.state === "sending")
+					await this.save({
+						...record,
+						job: {
+							...record.job,
+							comment: { ...record.job.comment, state: "unknown", updatedAt: new Date().toISOString() },
+						},
+					});
 				if (["queued", "uploading", "publishing"].includes(record.job.state)) {
 					const publishing = record.job.state === "publishing";
 					await this.save({

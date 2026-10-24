@@ -346,6 +346,17 @@ export const createApp = ({
 			return storyFailure(c, error);
 		}
 	});
+	app.use("/v1/story-jobs/:id/comments", bodyLimit({ maxSize: 16384 }));
+	app.post("/v1/story-jobs/:id/comments", async (c) => {
+		try {
+			const profile = previewProfile(c);
+			return c.json({
+				data: await stories?.comment(profile, c.req.param("id"), c.req.header("idempotency-key"), await storyJson(c)),
+			});
+		} catch (error) {
+			return storyFailure(c, error);
+		}
+	});
 	const dmFailure = (c: Context, error: unknown) => {
 		const safe = error instanceof DmError ? error : new DmError("UPSTREAM_CHANGED", "DM操作の結果を確認できません");
 		return c.json({ error: { code: safe.code, message: safe.message } }, dmStatus(safe.code));

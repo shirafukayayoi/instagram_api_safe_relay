@@ -884,3 +884,79 @@ it("投稿カードの公開フラグが無効ならアップロード前に停�
 	expect(publisher.upload).not.toHaveBeenCalled();
 	expect(publisher.publish).not.toHaveBeenCalled();
 });
+
+describe("ストーリー公開と実コメントの分離", () => {
+	it("送信中を永続化し、結果不明を再送せず読み取りだけで確定する", async () => {
+		let jobId = "";
+		const find = vi.fn<() => Promise<string | null>>(async () => null);
+		const publisher = {
+			...backend(),
+			resolveOwnStory: vi.fn(async () => "999"),
+			findOwnStoryComment: find,
+			commentOwnStory: vi.fn(async (_id: string, _text: string, _key: string, beforeSend: () => Promise<void>) => {
+				await beforeSend();
+				expect(f.store.get(jobId)?.job.comment?.state).toBe("sending");
+				throw new Error("PRIVATE");
+			}),
+		};
+		const f = await fixture(publisher);
+		const job = await f.service.create("one", "comment-story", { filePath: f.filePath });
+		jobId = job.id;
+		await waitFor(f.service, job.id);
+		expect(await f.service.comment("one", job.id, "comment-a", { text: "文面" })).toMatchObject({
+			state: "published",
+			comment: { state: "unknown" },
+		});
+		expect(await f.service.comment("one", job.id, "comment-b", { text: "文面" })).toMatchObject({
+			comment: { state: "unknown" },
+		});
+		expect(publisher.commentOwnStory).toHaveBeenCalledTimes(1);
+		find.mockResolvedValueOnce("777");
+		expect(await f.service.comment("one", job.id, "comment-a", { text: "文面" })).toMatchObject({
+			comment: { state: "completed", commentId: "777" },
+		});
+		expect(publisher.commentOwnStory).toHaveBeenCalledTimes(1);
+		await expect(f.service.comment("one", job.id, "comment-a", { text: "別の文面" })).rejects.toMatchObject({
+			code: "IDEMPOTENCY_CONFLICT",
+		});
+		const serialized = JSON.stringify(f.store.get(job.id));
+		expect(serialized).not.toContain("PRIVATE");
+		expect(serialized).not.toContain("文面");
+	});
+	it("実公開を照合してから結果不明を回復し、元のエラーを履歴に残す", async () => {
+		const publisher = {
+			...backend(),
+			publish: vi.fn(async () => {
+				throw new StoryError("PUBLICATION_UNKNOWN", "照合待ち");
+			}),
+			resolveOwnStory: vi.fn(async () => "999"),
+			findOwnStoryComment: vi.fn(async () => null),
+			commentOwnStory: vi.fn(async (_id: string, _text: string, _key: string, beforeSend: () => Promise<void>) => {
+				await beforeSend();
+				return "777";
+			}),
+		};
+		const f = await fixture(publisher);
+		const job = await f.service.create("one", "legacy-caption", { filePath: f.filePath, caption: "文面" });
+		await waitFor(f.service, job.id);
+		await expect(f.service.comment("one", job.id, "comment-a", { text: "文面", mediaId: "888" })).rejects.toMatchObject(
+			{ code: "MEDIA_NOT_ALLOWED" },
+		);
+		expect(f.store.get(job.id)?.job.state).toBe("unknown");
+		expect(await f.service.comment("one", job.id, "comment-a", { text: "文面", mediaId: "999" })).toMatchObject({
+			state: "published",
+			mediaId: "999",
+			recovery: { fromState: "unknown", previousErrorCode: "PUBLICATION_UNKNOWN" },
+			comment: { state: "completed", commentId: "777" },
+		});
+		expect(publisher.publish).toHaveBeenCalledTimes(1);
+		const saved = f.store.get(job.id);
+		if (!saved?.job.comment) throw new Error("コメント台帳が必要です");
+		await f.store.save({ ...saved, job: { ...saved.job, comment: { ...saved.job.comment, state: "sending" } } });
+		await f.service.close();
+		const restored = new StoryStore(f.store.directory);
+		stores.push(restored);
+		await restored.open();
+		expect(restored.get(job.id)?.job.comment?.state).toBe("unknown");
+	});
+});

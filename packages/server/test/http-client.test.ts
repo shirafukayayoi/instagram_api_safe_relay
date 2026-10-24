@@ -161,7 +161,9 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		]);
 		expect(await (await f.open()).getMobileAccount(signal())).toEqual(account);
 		const first = f.fetcher.mock.calls[0]?.[1]?.headers as Record<string, string>;
-		expect(JSON.parse(Buffer.from((first.Authorization ?? "").replace("Bearer IGT:2:", ""), "base64").toString())).toEqual({
+		expect(
+			JSON.parse(Buffer.from((first.Authorization ?? "").replace("Bearer IGT:2:", ""), "base64").toString()),
+		).toEqual({
 			ds_user_id: "123",
 			sessionid: "SECRET",
 			should_use_header_over_cookies: true,
@@ -324,5 +326,65 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 			otherClient.uploadVideo("1234567890123", new Uint8Array([1]), 720, 1280, 2, signal()),
 		).rejects.toMatchObject({ code: "UPLOAD_FAILED" });
 		expect(other.fetcher).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("自分のストーリーのコメント欄", () => {
+	const story = { pk: "999", user: { pk: "123" }, taken_at: 123, audience: "besties", comments_disabled: false };
+	const own = { user: { pk: "123", username: "owner" } };
+	const comment = { pk: "777", user: { pk: "123" }, text: "文面" };
+	const creationKey = "d751f3c8-27ea-4353-8bf5-eb7747ac3ac5";
+	it("所有者と公開範囲を照合し、台帳保存後に1回送って読み戻す", async () => {
+		const f = await fixture([
+			ok(own),
+			ok({ reel: { user: { pk: "123" }, items: [story] } }),
+			ok({ comments: [], has_more_comments: false }),
+			ok({ comment }),
+			ok({ comments: [comment], has_more_comments: false }),
+		]);
+		const client = await f.open();
+		expect(await client.resolveOwnStory(account, "close_friends", null, 100, 200, signal())).toBe("999");
+		const before = vi.fn(async () => {
+			expect(f.fetcher.mock.calls.filter(([, o]) => o?.method === "POST")).toHaveLength(0);
+		});
+		expect(await client.commentOwnStory("999", "文面", creationKey, before, signal())).toBe("777");
+		expect(before).toHaveBeenCalledTimes(1);
+		const posts = f.fetcher.mock.calls.filter(([, o]) => o?.method === "POST");
+		expect(posts).toHaveLength(1);
+		expect(posts[0]?.[0]).toBe("https://i.instagram.com/api/v1/media/999_123/comment/");
+		const body = posts[0]?.[1]?.body as URLSearchParams;
+		expect(JSON.parse((body.get("signed_body") ?? "").replace(/^SIGNATURE\./, ""))).toMatchObject({
+			comment_text: "文面",
+			comment_creation_key: creationKey,
+		});
+	});
+	it("同じ本文があれば再送せず、照合していない他のメディアへ送らない", async () => {
+		const f = await fixture([
+			ok(own),
+			ok({ reel: { user: { pk: "123" }, items: [story] } }),
+			ok({ comments: [comment], has_more_comments: false }),
+		]);
+		const client = await f.open();
+		await expect(client.commentOwnStory("888", "文面", creationKey, async () => {}, signal())).rejects.toMatchObject({
+			code: "MEDIA_NOT_ALLOWED",
+		});
+		await client.resolveOwnStory(account, "close_friends", "999", 0, 200, signal());
+		const before = vi.fn();
+		expect(await client.commentOwnStory("999", "文面", creationKey, before, signal())).toBe("777");
+		expect(before).not.toHaveBeenCalled();
+		expect(f.fetcher.mock.calls.filter(([, o]) => o?.method === "POST")).toHaveLength(0);
+	});
+	it("通常公開・別の所有者・候補複数ではコメントしない", async () => {
+		for (const items of [
+			[{ ...story, audience: "everyone" }],
+			[{ ...story, user: { pk: "456" } }],
+			[story, { ...story, pk: "998" }],
+		]) {
+			const f = await fixture([ok(own), ok({ reel: { user: { pk: "123" }, items } })]);
+			await expect(
+				(await f.open()).resolveOwnStory(account, "close_friends", null, 100, 200, signal()),
+			).rejects.toMatchObject({ code: "COMMENT_UNAVAILABLE" });
+			expect(f.fetcher.mock.calls.filter(([, o]) => o?.method === "POST")).toHaveLength(0);
+		}
 	});
 });
