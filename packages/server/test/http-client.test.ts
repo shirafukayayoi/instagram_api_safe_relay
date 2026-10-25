@@ -410,11 +410,17 @@ describe("自分のストーリーのコメント欄", () => {
 		expect(reads).toHaveLength(2);
 		expect(new URL(String(reads[0]?.[0])).searchParams.get("media_id")).toBe("999_123");
 		const body = posts[0]?.[1]?.body as URLSearchParams;
-		expect(body.has("signed_body")).toBe(false);
-		expect(Object.fromEntries(body)).toEqual({
+		expect([...body.keys()]).toEqual(["signed_body"]);
+		const payload = JSON.parse((body.get("signed_body") ?? "").replace(/^SIGNATURE\./, ""));
+		const session = JSON.parse(await fs.readFile(f.file, "utf8"));
+		expect(payload).toEqual({
 			comment_text: "文面",
 			media_id: "999_123",
+			container_module: "stories_viewer",
+			_uuid: session.mobile.uuid,
+			_uid: "123",
 		});
+		expect(posts[0]?.[1]?.headers).toMatchObject({ "X-IG-Device-ID": payload._uuid });
 	});
 	it("通常コメントの応答をストーリーの成功と誤認せず、同じ要求も再送しない", async () => {
 		const f = await fixture([

@@ -386,10 +386,17 @@ export class InstagramHttpClient {
 		const existing = await this.findOwnStoryComment(mediaId, text, signal);
 		if (existing) return existing;
 		if (this.#commentAttempts.has(creationKey)) throw new StoryError("COMMENT_UNKNOWN", "コメント要求は再送しません");
-		// 専用経路はアプリと同じ2項目に限定する。重複防止は永続台帳とローカルの操作IDで行う。
+		const mobile = this.#session.mobile;
+		if (!mobile) throw new StoryError("SESSION_NOT_READY", "モバイル用の端末情報を確認できません");
+		// 449系の専用経路は文脈・本人ID・端末IDをsigned_bodyに含める。任意の画面履歴は捏造しない。
 		const body = new URLSearchParams({
-			comment_text: text,
-			media_id: `${mediaId}_${this.#session.account.id}`,
+			signed_body: `SIGNATURE.${JSON.stringify({
+				comment_text: text,
+				media_id: `${mediaId}_${this.#session.account.id}`,
+				container_module: "stories_viewer",
+				_uuid: mobile.uuid,
+				_uid: this.#session.account.id,
+			})}`,
 		});
 		await beforeSend();
 		this.#commentAttempts.add(creationKey);

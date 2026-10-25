@@ -48,7 +48,7 @@ python scripts/import-browser-session.py \
 - 公開：固定の`/api/v1/media/configure_to_story/`を1回だけ呼び、メディアID・所有者・親しい友達の`audience: besties`・指定キャプションを照合します。根拠がなければ`unknown`です。
 - 投稿時コメント（現在停止中）：実験実装はモバイルAPIで実アカウントを照合し、公開要求の`story_captions`に`[{"text":"指定文面","is_quick_caption":true,"sticker_id":-1}]`をJSON文字列で送ります。動画は実際の寸法・長さと`?video=1`を使います。通常の`caption`は空にします。公開応答に指定文面がなければ同じIDの`media/<ID>/info/`を1回読み戻し、所有者・公開範囲・文面を照合します。根拠がなければIDを保持して`unknown`とし、公開要求を再送しません。
 - ハイライト登録：固定の`/api/v1/highlights/highlight:<ID>/edit_reel/`へ対象IDの追加だけを送り、削除・名前・カバーの変更をしません。`applying`保存後に1回だけ呼び、登録済み一覧を読み戻して対象と既存選択を検証します。
-- 公開後のコメント（URL投稿Skillからは呼ばない別機能）：通常投稿の `media/<ID>/comment/` と分離し、固定の `media/story_comment/post/` へフォームの `comment_text` と所有者込みの `media_id` を送ります。`media/story_comment/fetch/` の全件読み戻しで、自分の同じ文面を一意に確認できた場合だけ完了します。受付応答だけでは完了にしません。
+- 公開後のコメント（URL投稿Skillからは呼ばない別機能）：通常投稿の `media/<ID>/comment/` と分離し、固定の `media/story_comment/post/` へ `signed_body` 形式で送ります。内容は `comment_text`、所有者込みの `media_id`、`container_module: stories_viewer`、保存済み端末の `_uuid`、本人の `_uid` です。`media/story_comment/fetch/` の全件読み戻しで、自分の同じ文面を一意に確認できた場合だけ完了します。受付応答だけでは完了にしません。
 
 リダイレクト、追加認証、利用制限では停止します。別ホストへの認証転送、任意URL・任意GraphQLの外部公開、自動再ログインは追加していません。内部APIや固定クエリの仕様が変わった場合はエラーとして停止します。
 
@@ -73,3 +73,11 @@ python scripts/import-browser-session.py \
 同じアカウントの親しい友達ストーリーで、ユーザーが投稿時に添えた文面を確認しました。`media/<ID>/info/` の`caption`はnullで、`story_captions`もありませんでした。一方、自分のストーリー一覧には`story_comments`があり、専用の`media/story_comment/fetch/`でも同じコメントID・本文・投稿者ID・メディアIDと`is_created_by_media_owner: true`を確認できました。必要な機能は、この本人コメントであり、クイックキャプションではありません。成功例の本文・認証値・素材URLはログやリポジトリへ保存していません。
 
 Relayで公開済みの自分の60秒動画へ、専用経路の2項目フォームで指定文面を1回追記しましたが、応答は`status: ok`のみで、保存を確認できませんでした。動画の削除・再公開は行っていません。この結果不明は専用のローカル記録に保持し、再送しません。送信成功は未解決のため、文面付き新規投稿の停止を維持します。読み戻しは本文と本人IDだけでなく、対象メディアIDと本人コメントの印も照合します。
+
+## 現在版アプリとの送信形式の比較
+
+2026-10-25に、[Android版449.0.0.52.84の配布パッケージ](https://apkpure.net/instagram-app/com.instagram.android/download/449.0.0.52.84)をインストールせず静的解析しました。XAPKのSHA256は`5da1cc2385064cf39f24385cfa3a07815e308f207b96bfc86078e984c48f617a`で配布ページと一致し、本体署名のSHA1は`c56fb7d591ba6704df047fd98f535372fea00211`でした。
+
+`CommentPostingRequestExtensionsKt.A01`では、専用POSTに本文・メディアIDだけでなく`container_module`を渡し、リクエストbuilderの署名形式を有効にしていました。builderは本人の`_uid`と端末の`_uuid`を含め、`SIGNATURE.`を付けたJSONを`signed_body`へ格納します。`ReelViewerFragment.A19`で確認した通常のストーリー表示の文脈`stories_viewer`を使います。任意項目の`story_ranking_token`や`nav_chain`は捏造せず省略します。メディアIDはアプリのモデルと同じ所有者込みの形式を維持します。
+
+この差分に基づいて送信形式を修正しました。過去の結果不明を自動再送する変更ではありません。URL投稿Skillの文面付き新規投稿は、実アカウントでの保存検証が完了するまで停止を維持します。
