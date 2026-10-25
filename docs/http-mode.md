@@ -65,3 +65,5 @@ python scripts/import-browser-session.py \
 旧経路の結果不明は通常のコメントAPI呼び出しで自動再送しません。今回の手動修復では、記録済みのHTTP 400と拒否キー、専用欄の空の全件一覧を照合し、元の状態・日時・拒否理由を`comment.recovery`に残しました。専用経路への送信前も`sending`を永続化し、受付応答だけの場合は`unknown`を維持します。本文や認証情報は回復履歴に含めません。
 
 投稿時クイックキャプションは、アプリの[公開要求builder](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/C64177LSe.java)と[文面serializer](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/C282695Ej.java)を参照しました。公式のAPI契約ではありません。従来の公開後コメントの台帳は保持し、投稿時文面への自動変換・再送は行いません。`--comment`と`--caption`は同義のため、初回からどちらか一方を指定します。
+
+ユーザーのスマホでも、この再投稿の文面が表示されないことを確認しました。投稿時コメントは失敗として扱います。アプリの[クイックキャプション生成処理](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/AnonymousClass8ME.java)と比較し、`text`、`is_quick_caption: true`、`sticker_id: -1`の形式は一致していますが、それだけで保存・表示されることは保証されません。必要な条件は未特定であり、推測した追加パラメーターで実公開を繰り返しません。次の切り分けには、アプリで文面表示に成功した既存ストーリーのデータとの比較が必要です。
