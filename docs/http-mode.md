@@ -46,7 +46,7 @@ python scripts/import-browser-session.py \
 - ハイライト一覧・登録済みメディア：`PolarisProfileStoryHighlightsTrayContentQuery`と`PolarisStoriesV3HighlightsPageQuery`の固定2クエリだけを使います。ページングが完了しない場合は途中結果を返しません。
 - 素材：検証したコピーを固定rupload先へ送ります。動画本体の再エンコードは行いません。
 - 公開：固定の`/api/v1/media/configure_to_story/`を1回だけ呼び、メディアID・所有者・親しい友達の`audience: besties`・指定キャプションを照合します。根拠がなければ`unknown`です。
-- 投稿時コメント（現在停止中）：実験実装はモバイルAPIで実アカウントを照合し、公開要求の`story_captions`に`[{"text":"指定文面","is_quick_caption":true,"sticker_id":-1}]`をJSON文字列で送ります。動画は実際の寸法・長さと`?video=1`を使います。通常の`caption`は空にします。公開応答に指定文面がなければ同じIDの`media/<ID>/info/`を1回読み戻し、所有者・公開範囲・文面を照合します。根拠がなければIDを保持して`unknown`とし、公開要求を再送しません。
+- 投稿時コメント：モバイルAPIで実アカウントを照合し、公開要求に `comment_as_caption: 指定文面` と `use_comment_as_caption_type: "true"` を送ります。通常の`caption`は空にし、`story_captions`は送りません。動画は実寸・長さと`?video=1`を使います。公開応答で所有者・公開範囲・IDを照合し、同じIDの専用コメント一覧で本文・本人ID・メディアID・本人コメントの印・コメントIDを確認します。根拠がなければIDを保持して`unknown`とし、公開要求を再送しません。
 - ハイライト登録：固定の`/api/v1/highlights/highlight:<ID>/edit_reel/`へ対象IDの追加だけを送り、削除・名前・カバーの変更をしません。`applying`保存後に1回だけ呼び、登録済み一覧を読み戻して対象と既存選択を検証します。
 - 公開後のコメント（URL投稿Skillからは呼ばない別機能）：通常投稿の `media/<ID>/comment/` と分離し、固定の `media/story_comment/post/` へ `signed_body` 形式で送ります。内容は `comment_text`、所有者込みの `media_id`、`container_module: stories_viewer`、保存済み端末の `_uuid`、本人の `_uid` です。`media/story_comment/fetch/` の全件読み戻しで、自分の同じ文面を一意に確認できた場合だけ完了します。受付応答だけでは完了にしません。
 
@@ -81,3 +81,10 @@ Relayで公開済みの自分の60秒動画へ、専用経路の2項目フォー
 `CommentPostingRequestExtensionsKt.A01`では、専用POSTに本文・メディアIDだけでなく`container_module`を渡し、リクエストbuilderの署名形式を有効にしていました。builderは本人の`_uid`と端末の`_uuid`を含め、`SIGNATURE.`を付けたJSONを`signed_body`へ格納します。`ReelViewerFragment.A19`で確認した通常のストーリー表示の文脈`stories_viewer`を使います。任意項目の`story_ranking_token`や`nav_chain`は捏造せず省略します。メディアIDはアプリのモデルと同じ所有者込みの形式を維持します。
 
 この差分に基づいて送信形式を修正しました。過去の結果不明を自動再送する変更ではありません。URL投稿Skillの文面付き新規投稿は、実アカウントでの保存検証が完了するまで停止を維持します。
+
+
+## 投稿時の本人コメント専用項目
+
+現在版APKの `LX/0Ben.A04` に、クイックキャプションと別の `comment_as_caption` と `use_comment_as_caption_type` がありました。前者には文面文字列、後者には文字列の `true` を渡します。今回の実装はこの投稿時フィールドへ変更し、読み戻しも本人コメントへ限定しました。`caption` や `story_captions` の一致だけでは成功にしません。新規Skill操作には `captionTransport: comment_as_caption_v1` を保存し、旧方式の非空文面を持つ操作は自動変換せず停止します。実アカウントでの新形式の検証結果は追って記録します。
+
+専用経路を署名形式に直した既存動画への追記でも保存を確認できませんでした。ユーザーが追加で許可した親しい友達向けの写真1件でも、統合コメント経路は拒否応答、専用経路は保存未確認でした。動画だけの問題とは断定できず、これらを成功として扱いません。各試験の元台帳・結果不明・対象IDをローカルへ保持し、再送しません。

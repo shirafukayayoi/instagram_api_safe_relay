@@ -96,6 +96,10 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		const f = await fixture([
 			ok({ user: { pk: "123", username: "owner" } }),
 			ok({ media: { pk: "999", user: { pk: "123" }, audience: "besties", caption: { text: "文面" } } }),
+			ok({
+				comments: [{ pk: "777", media_id: "999", user: { pk: "123" }, text: "文面", is_created_by_media_owner: true }],
+				has_more_comments: false,
+			}),
 		]);
 		const client = await f.open();
 		const metadata = { mimeType: "video/mp4" as const, width: 720, height: 1280, durationSeconds: 60 };
@@ -106,7 +110,9 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 		const payload = JSON.parse((body.get("signed_body") ?? "").replace(/^SIGNATURE\./, ""));
 		expect(payload.audience).toBe("besties");
 		expect(payload.caption).toBe("");
-		expect(JSON.parse(payload.story_captions)).toEqual([{ text: "文面", is_quick_caption: true, sticker_id: -1 }]);
+		expect(payload.comment_as_caption).toBe("文面");
+		expect(payload.use_comment_as_caption_type).toBe("true");
+		expect(payload.story_captions).toBeUndefined();
 		expect(payload.extra).toEqual({ source_width: 720, source_height: 1280 });
 		expect(payload.clips[0].length).toBe(60);
 		expect(f.fetcher.mock.calls[1]?.[0]).toBe("https://i.instagram.com/api/v1/media/configure_to_story/?video=1");
@@ -118,7 +124,12 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 			const f = await fixture([
 				ok({ user: { pk: "123", username: "owner" } }),
 				ok({ media }),
-				ok({ items: [{ ...media, user: { pk: owner }, story_captions: [{ text: "文面", is_quick_caption: true }] }] }),
+				ok({
+					comments: [
+						{ pk: "777", media_id: "999", user: { pk: owner }, text: "文面", is_created_by_media_owner: true },
+					],
+					has_more_comments: false,
+				}),
 			]);
 			const result = (await f.open()).publish("1234567890123", account, "close_friends", "文面", signal(), undefined, {
 				mimeType: "image/jpeg",
@@ -129,7 +140,9 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 			if (owner === "123") await expect(result).resolves.toBe("999");
 			else await expect(result).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN", mediaId: "999" });
 			expect(f.fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
-			expect(f.fetcher.mock.calls[2]?.[0]).toBe("https://i.instagram.com/api/v1/media/999/info/");
+			expect(f.fetcher.mock.calls[2]?.[0]).toBe(
+				"https://i.instagram.com/api/v1/media/story_comment/fetch/?media_id=999_123",
+			);
 		}
 	});
 	it("限定公開の根拠・文面が欠けた結果やタイムアウトを再送しない", async () => {

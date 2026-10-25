@@ -22,6 +22,7 @@ class StoryTests(unittest.TestCase):
         self.directory = Path(self.folder.name)
         self.data = {"url": "https://youtu.be/example", "audience": "close_friends",
                      "profile": "account1", "caption": "文面🌸\n2行目", "key": "same-key",
+                     "captionTransport": "comment_as_caption_v1",
                      "downloaded": True, "media": {}}
         self.args = SimpleNamespace(**self.data, download_only=False, preview_only=False,
                                     start_relay=False)
@@ -145,6 +146,19 @@ class StoryTests(unittest.TestCase):
                 self.run_story()
             api.assert_not_called()
             register.assert_not_called()
+
+    def test_legacy_quick_caption_never_converts_or_contacts_relay(self):
+        self.data.pop('captionTransport')
+        with patch.object(story, 'api') as api, patch.object(story, 'ensure_ready') as ready:
+            with self.assertRaisesRegex(RuntimeError, '旧方式'):
+                self.run_story()
+            api.assert_not_called()
+            ready.assert_not_called()
+
+    def test_new_caption_transport_is_recorded_without_changing_text(self):
+        data = {'caption': '文面🌸\n2行目'}
+        story.check_caption_transport(data, False)
+        self.assertEqual(data, {'caption': '文面🌸\n2行目', 'captionTransport': 'comment_as_caption_v1'})
 
     def test_preview_never_creates_publication_and_reuses_same_preview(self):
         self.args.preview_only = True

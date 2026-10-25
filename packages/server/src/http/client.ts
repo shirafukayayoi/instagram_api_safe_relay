@@ -768,9 +768,7 @@ export class InstagramHttpClient {
 			...attachment,
 			configure_mode: "1",
 			caption: "",
-			...(caption !== ""
-				? { story_captions: JSON.stringify([{ text: caption, is_quick_caption: true, sticker_id: -1 }]) }
-				: {}),
+			...(caption !== "" ? { comment_as_caption: caption, use_comment_as_caption_type: "true" } : {}),
 			share_to_facebook: "",
 			share_to_fb_destination_id: "",
 			share_to_fb_destination_type: "USER",
@@ -828,31 +826,13 @@ export class InstagramHttpClient {
 				pk ?? undefined,
 			);
 		if (caption !== "") {
-			const matches = (value: Json) =>
-				object(value.caption).text === caption ||
-				(Array.isArray(value.story_captions) &&
-					value.story_captions.some((item) => object(item).is_quick_caption === true && object(item).text === caption));
-			let verified = matches(media);
-			if (!verified) {
-				try {
-					const read = await this.#json(
-						"i.instagram.com",
-						`/api/v1/media/${pk}/info/`,
-						signal,
-						undefined,
-						{},
-						"json",
-						true,
-					);
-					const item = object(Array.isArray(read.items) && read.items.length === 1 ? read.items[0] : undefined);
-					verified =
-						numericId(item.pk) === pk &&
-						numericId(object(item.user).pk) === account.id &&
-						(audience === "close_friends" ? item.audience === "besties" : item.audience !== "besties") &&
-						matches(item);
-				} catch {
-					verified = false;
-				}
+			// 公開応答で所有者・公開範囲を照合済み。同じIDの本人コメントを専用一覧で確認する。
+			this.#commentTargets.add(pk);
+			let verified = false;
+			try {
+				verified = (await this.findOwnStoryComment(pk, caption, signal)) !== null;
+			} catch {
+				verified = false;
 			}
 			if (!verified) throw new StoryError("PUBLICATION_UNKNOWN", "投稿時コメントを確認できません。再投稿しません", pk);
 		}

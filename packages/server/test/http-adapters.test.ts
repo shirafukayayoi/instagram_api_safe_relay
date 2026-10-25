@@ -17,6 +17,7 @@ afterEach(async () => {
 });
 const fake = () => ({
 	getAccount: vi.fn(async () => account),
+	getMobileAccount: vi.fn(async () => account),
 	uploadPhoto: vi.fn(async () => undefined),
 	uploadVideo: vi.fn(async () => undefined),
 	publish: vi.fn(async () => "999"),
@@ -27,12 +28,14 @@ const fake = () => ({
 const signal = () => new AbortController().signal;
 
 describe("HTTP投稿アダプター", () => {
-	it("投稿時コメントは実公開での保存を確認できるまで有効化しない", async () => {
+	it("投稿時コメントの前にモバイルの実アカウントを照合する", async () => {
 		const client = fake();
 		const publisher = await createHttpStoryPublisher(client as unknown as InstagramHttpClient, signal());
-		expect(publisher.supportsStoryCaption).toBe(false);
+		expect(publisher.supportsStoryCaption).toBe(true);
+		await publisher.checkStoryCaptionSession?.();
+		expect(client.getMobileAccount).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal));
 		await expect(publisher.publish(account, "close_friends", "文面")).rejects.toMatchObject({
-			code: "COMMENT_UNAVAILABLE",
+			code: "PUBLICATION_UNKNOWN",
 		});
 		expect(client.uploadPhoto).not.toHaveBeenCalled();
 		expect(client.publish).not.toHaveBeenCalled();

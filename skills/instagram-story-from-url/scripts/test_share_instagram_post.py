@@ -84,6 +84,14 @@ class ShareTests(unittest.TestCase):
                 'feedPost': self.reference})
         self.assertNotIn('job', json.loads((self.directory / 'operation.json').read_text()))
 
+    def test_legacy_caption_never_converts_or_contacts_relay(self):
+        self.data['caption'] = self.args.caption = '旧方式の文面'
+        self.save()
+        with patch.object(share, 'api') as api, patch.object(share, 'ensure_ready') as ready:
+            with self.assertRaisesRegex(RuntimeError, '旧方式'):
+                share.run(self.args, self.directory)
+            api.assert_not_called(); ready.assert_not_called()
+
     def test_missing_post_link_never_becomes_success(self):
         self.data['job'] = '24f00393-097d-4f64-85fc-b112a89ff759'; self.save()
         with patch.object(story, 'api', return_value={'data': {'state': 'published', 'mediaId': '999', 'audience': 'all'}}), \

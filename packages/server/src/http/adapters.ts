@@ -28,8 +28,11 @@ export const createHttpStoryPublisher = async (
 	};
 	return {
 		supportsFeedPost: feedPostSharingEnabled,
-		// 実公開で文面を読み戻せなかったため、保存と表示を検証できるまで停止する。
-		supportsStoryCaption: false,
+		supportsStoryCaption: true,
+		checkStoryCaptionSession: async () => {
+			check();
+			await client.getMobileAccount(signal);
+		},
 		resolveOwnStory: (account, audience, mediaId, after, before) =>
 			client.resolveOwnStory(account, audience, mediaId, after, before, signal),
 		findOwnStoryComment: (mediaId, text) => client.findOwnStoryComment(mediaId, text, signal),
@@ -76,8 +79,6 @@ export const createHttpStoryPublisher = async (
 		},
 		publish: async (account, audience = "all", caption = "", feedPost) => {
 			check();
-			if (caption !== "")
-				throw new StoryError("COMMENT_UNAVAILABLE", "投稿時コメントの保存を確認できないため停止しています");
 			if (!uploaded || publishAttempted)
 				throw new StoryError("PUBLICATION_UNKNOWN", "未アップロードの公開・公開要求の再送を拒否しました");
 			const current = await client.getAccount(signal);

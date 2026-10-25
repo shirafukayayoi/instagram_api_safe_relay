@@ -48,6 +48,14 @@ def add_caption_arguments(parser):
     group.add_argument("--comment", dest="caption", help="--captionと同じ、投稿時に添える文面")
 
 
+def check_caption_transport(data, existing):
+    if not data.get("caption"):
+        return
+    if existing and data.get("captionTransport") != "comment_as_caption_v1":
+        raise RuntimeError("旧方式の投稿時コメントを含む操作です。新方式へ自動変換・再投稿しません")
+    data["captionTransport"] = "comment_as_caption_v1"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("url", nargs="?")
@@ -126,6 +134,7 @@ def run(args, directory):
     if any(data.get(k, "" if k == "caption" else None) != v for k, v in intent.items()):
         raise RuntimeError("操作IDを異なるURL・公開範囲・プロファイル・キャプションに再利用できません")
     data.update(intent)
+    check_caption_transport(data, ledger.exists())
     highlight = getattr(args, "highlight", None)
     highlight_id = getattr(args, "highlight_id", None)
     if highlight or highlight_id:

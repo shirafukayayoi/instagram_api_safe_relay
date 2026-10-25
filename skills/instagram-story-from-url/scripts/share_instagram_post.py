@@ -8,7 +8,7 @@ import urllib.parse
 import uuid
 
 from relay_runtime import ROOT, operation_profile, ensure_ready, ensure_running, request
-from story_from_url import api, save, poll_job, add_caption_arguments
+from story_from_url import api, save, poll_job, add_caption_arguments, check_caption_transport
 
 
 def canonical_url(value):
@@ -67,6 +67,7 @@ def run(args, directory):
         raise RuntimeError('旧方式の公開後コメントを含む操作です。自動変換・追記・再投稿は行いません')
     if any(data.get(k) != v for k, v in intent.items()):
         raise RuntimeError('同じ操作IDの元投稿・投稿先・公開範囲・キャプションを変更できません')
+    check_caption_transport(data, file.exists())
     if args.highlight or args.highlight_id:
         target = {'name': args.highlight, 'id': args.highlight_id}
         if data.get('highlightIntent') and data['highlightIntent'] != target:
