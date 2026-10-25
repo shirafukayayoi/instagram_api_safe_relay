@@ -27,6 +27,16 @@ const fake = () => ({
 const signal = () => new AbortController().signal;
 
 describe("HTTP投稿アダプター", () => {
+	it("投稿時コメントは実公開での保存を確認できるまで有効化しない", async () => {
+		const client = fake();
+		const publisher = await createHttpStoryPublisher(client as unknown as InstagramHttpClient, signal());
+		expect(publisher.supportsStoryCaption).toBe(false);
+		await expect(publisher.publish(account, "close_friends", "文面")).rejects.toMatchObject({
+			code: "COMMENT_UNAVAILABLE",
+		});
+		expect(client.uploadPhoto).not.toHaveBeenCalled();
+		expect(client.publish).not.toHaveBeenCalled();
+	});
 	it("素材が変わればアップロードせず、公開要求を再送しない", async () => {
 		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ig-adapter-"));
 		dirs.push(dir);
@@ -47,10 +57,10 @@ describe("HTTP投稿アダプター", () => {
 		await expect(publisher.publish(account)).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN" });
 		await publisher.upload(media);
 		client.publish.mockRejectedValueOnce(new StoryError("PUBLICATION_UNKNOWN", "応答喪失"));
-		await expect(publisher.publish(account, "close_friends", "文面")).rejects.toMatchObject({
+		await expect(publisher.publish(account, "close_friends")).rejects.toMatchObject({
 			code: "PUBLICATION_UNKNOWN",
 		});
-		await expect(publisher.publish(account, "close_friends", "文面")).rejects.toMatchObject({
+		await expect(publisher.publish(account, "close_friends")).rejects.toMatchObject({
 			code: "PUBLICATION_UNKNOWN",
 		});
 		expect(client.publish).toHaveBeenCalledTimes(1);
