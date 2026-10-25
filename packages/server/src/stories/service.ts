@@ -156,6 +156,7 @@ export class StoryService {
 								throw new StoryError("SESSION_NOT_READY", "実ログインアカウントを確認できません");
 							publisher = await session.createPublisher(controller.signal);
 							const current = await publisher.getAccount();
+							await this.#checkCaption(publisher, parsed.data.caption);
 							feedPost = await this.#feedReference(publisher, parsed.data.feedPost, media);
 							if (controller.signal.aborted) throw new StoryError("INTERRUPTED", "プレビューを中断しました");
 							return current;
@@ -353,6 +354,12 @@ export class StoryService {
 		if (!record || record.job.profile !== profileName) throw new StoryError("NOT_FOUND", "ジョブが見つかりません");
 		return record.job;
 	}
+	async #checkCaption(publisher: StoryPublisher, caption: string) {
+		if (caption === "") return;
+		if (!publisher.supportsStoryCaption)
+			throw new StoryError("COMMENT_UNAVAILABLE", "この接続は投稿時のコメントに対応していません");
+		await publisher.checkStoryCaptionSession?.();
+	}
 	comment(profileName: string, id: string, key: string | undefined, input: unknown): Promise<StoryJob> {
 		return this.#intake.run(async () => {
 			const profile = this.#profile(profileName);
@@ -497,6 +504,7 @@ export class StoryService {
 						if (expectedAccount && (expectedAccount.id !== account.id || expectedAccount.username !== account.username))
 							throw new StoryError("ACCOUNT_CHANGED", "プレビューのアカウントが変更されました。再確認してください");
 						await this.#feedReference(publisher, feedPost, media, true);
+						await this.#checkCaption(publisher, caption);
 						await update({ state: "uploading", account });
 						check();
 						await publisher.upload(media);

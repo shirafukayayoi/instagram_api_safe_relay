@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Highlight, StoryAccount, StoryFeedPost, StoryFeedPostReference } from "instagram-api-safe-contracts";
 import { z } from "zod";
 import { StoryError } from "../stories/errors.js";
+import type { StoryMedia } from "../stories/media.js";
 
 const cookieNames = new Set(["sessionid", "csrftoken", "ds_user_id", "mid", "ig_did", "rur"]);
 const safeValue = z
@@ -715,13 +716,20 @@ export class InstagramHttpClient {
 		caption: string,
 		signal: AbortSignal,
 		feedPost?: StoryFeedPostReference,
+		metadata?: Pick<StoryMedia, "width" | "height" | "mimeType" | "durationSeconds">,
 	): Promise<string> {
 		validateId(id);
-		let attachment: Record<string, string> = {};
-		if (feedPost) {
+		const native = Boolean(feedPost) || caption !== "";
+		const video = metadata?.mimeType === "video/mp4";
+		if (caption !== "" && !feedPost && !metadata)
+			throw new StoryError("MEDIA_INVALID", "投稿時コメントには検証済みの素材情報が必要です");
+		if (native) {
 			const current = await this.getMobileAccount(signal);
 			if (current.id !== account.id || current.username !== account.username)
-				throw new StoryError("ACCOUNT_CHANGED", "カード公開前のアカウントが一致しません");
+				throw new StoryError("ACCOUNT_CHANGED", "モバイルAPIの公開先が一致しません");
+		}
+		let attachment: Record<string, string> = {};
+		if (feedPost) {
 			const source = await this.getFeedPost(feedPost.shortcode, signal);
 			if (source.mediaId !== feedPost.mediaId || source.ownerId !== feedPost.ownerId)
 				throw new StoryError("MEDIA_NOT_ALLOWED", "元投稿の参照先が変わりました");
@@ -750,13 +758,16 @@ export class InstagramHttpClient {
 			upload_id: id,
 			...attachment,
 			configure_mode: "1",
-			caption,
+			caption: "",
+			...(caption !== ""
+				? { story_captions: JSON.stringify([{ text: caption, is_quick_caption: true, sticker_id: -1 }]) }
+				: {}),
 			share_to_facebook: "",
 			share_to_fb_destination_id: "",
 			share_to_fb_destination_type: "USER",
 			...(audience === "close_friends" ? { audience: "besties" } : {}),
 		};
-		// Web向けのフォームはfeed_mediaを反映しない。カードだけモバイルAPIの形式で送る。
+		// 投稿時コメントとカードは、アプリが使うモバイル形式で公開する。
 		const nativeBody = {
 			...body,
 			_uid: this.#session.account.id,
@@ -764,23 +775,33 @@ export class InstagramHttpClient {
 			source_type: "4",
 			creation_surface: "camera",
 			capture_type: "normal",
-			original_media_type: "photo",
+			original_media_type: video ? "video" : "photo",
 			camera_session_id: randomUUID(),
 			client_timestamp: String(Math.floor(Date.now() / 1000)),
 			client_shared_at: String(Math.floor(Date.now() / 1000) - 1),
-			extra: { source_width: 1080, source_height: 1920 },
-			...(feedPost ? { _uuid: this.#session.mobile?.uuid, device_id: this.#session.mobile?.androidId } : {}),
+			extra: { source_width: metadata?.width ?? 1080, source_height: metadata?.height ?? 1920 },
+			_uuid: this.#session.mobile?.uuid,
+			device_id: this.#session.mobile?.androidId,
+			...(video
+				? {
+						length: metadata.durationSeconds,
+						clips: [{ length: metadata.durationSeconds, source_type: "4", camera_position: "back" }],
+						poster_frame_index: 0,
+						audio_muted: false,
+						video_result: "deprecated",
+					}
+				: {}),
 		};
 		const data = await this.#json(
-			feedPost ? "i.instagram.com" : "www.instagram.com",
-			"/api/v1/media/configure_to_story/",
+			native ? "i.instagram.com" : "www.instagram.com",
+			`/api/v1/media/configure_to_story/${native && video ? "?video=1" : ""}`,
 			signal,
-			feedPost
+			native
 				? new URLSearchParams({ signed_body: `SIGNATURE.${JSON.stringify(nativeBody)}` })
 				: new URLSearchParams(body),
 			{},
 			"json",
-			Boolean(feedPost),
+			native,
 		);
 
 		const media = object(data.media);
@@ -790,13 +811,42 @@ export class InstagramHttpClient {
 			!pk ||
 			numericId(object(media.user).pk) !== account.id ||
 			(audience === "close_friends" && media.audience !== "besties") ||
-			(audience === "all" && media.audience === "besties") ||
-			(caption !== "" && object(media.caption).text !== caption)
+			(audience === "all" && media.audience === "besties")
 		)
 			throw new StoryError(
 				"PUBLICATION_UNKNOWN",
 				"投稿ID・アカウント・公開範囲・文面の公開結果を確認できません。再送しません",
+				pk ?? undefined,
 			);
+		if (caption !== "") {
+			const matches = (value: Json) =>
+				object(value.caption).text === caption ||
+				(Array.isArray(value.story_captions) &&
+					value.story_captions.some((item) => object(item).is_quick_caption === true && object(item).text === caption));
+			let verified = matches(media);
+			if (!verified) {
+				try {
+					const read = await this.#json(
+						"i.instagram.com",
+						`/api/v1/media/${pk}/info/`,
+						signal,
+						undefined,
+						{},
+						"json",
+						true,
+					);
+					const item = object(Array.isArray(read.items) && read.items.length === 1 ? read.items[0] : undefined);
+					verified =
+						numericId(item.pk) === pk &&
+						numericId(object(item.user).pk) === account.id &&
+						(audience === "close_friends" ? item.audience === "besties" : item.audience !== "besties") &&
+						matches(item);
+				} catch {
+					verified = false;
+				}
+			}
+			if (!verified) throw new StoryError("PUBLICATION_UNKNOWN", "投稿時コメントを確認できません。再投稿しません", pk);
+		}
 		if (feedPost) {
 			let proof = media;
 			if (!Array.isArray(proof.story_feed_media)) {

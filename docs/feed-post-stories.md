@@ -16,7 +16,7 @@ python '<skill-dir>/scripts/share_instagram_post.py' \
 
 元画像を `work/story-smoke/<UUID>/original-post-image` に保存し、Pillowで1080×1920のぼかし背景・中央の角丸写真・共同投稿者を含むユーザー名を描画した `story-card.jpg` を作ります。実行するPythonに `python -m pip install Pillow` が必要です。同じ写真の領域に元メディアID・投稿者IDを持つInstagramのステッカーを指定します。プレビュー応答にはアカウント・公開範囲・元投稿の参照と投稿者が含まれます。写真とユーザー名は画像として描画済みです。元投稿リンクは別途Instagramの公開結果で検証します。
 
-`--caption` と `--highlight` / `--highlight-id` に対応します。指定しないハイライトへ自動登録しません。曲のキャプション規則はSkillを参照してください。
+投稿時に添える文面の `--comment`（`--caption`と同義）と `--highlight` / `--highlight-id` に対応します。指定しないハイライトへ自動登録しません。曲のキャプション規則はSkillを参照してください。
 
 ## APIと公開の確認
 

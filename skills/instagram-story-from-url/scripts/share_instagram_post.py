@@ -8,7 +8,7 @@ import urllib.parse
 import uuid
 
 from relay_runtime import ROOT, operation_profile, ensure_ready, ensure_running, request
-from story_from_url import api, save, poll_job
+from story_from_url import api, save, poll_job, add_caption_arguments
 
 
 def canonical_url(value):
@@ -63,6 +63,8 @@ def run(args, directory):
               'audience': args.audience, 'caption': args.caption}
     data = json.loads(file.read_text(encoding='utf-8')) if file.exists() else {
         **intent, 'key': 'post-share-' + str(args.operation)}
+    if data.get('comment'):
+        raise RuntimeError('旧方式の公開後コメントを含む操作です。自動変換・追記・再投稿は行いません')
     if any(data.get(k) != v for k, v in intent.items()):
         raise RuntimeError('同じ操作IDの元投稿・投稿先・公開範囲・キャプションを変更できません')
     if args.highlight or args.highlight_id:
@@ -70,11 +72,6 @@ def run(args, directory):
         if data.get('highlightIntent') and data['highlightIntent'] != target:
             raise RuntimeError('同じ操作IDのハイライト登録先を変更できません')
         data['highlightIntent'] = target
-    comment = getattr(args, 'comment', '')
-    if data.get('comment', '') != comment and file.exists():
-        raise RuntimeError('同じ操作IDのコメント本文を変更できません')
-    if comment:
-        data['comment'] = comment
     save(file, data)
     if data.get('job'):
         if args.start_relay:
@@ -117,8 +114,7 @@ def main():
     parser.add_argument('--audience', choices=['all', 'close_friends'], required=True)
     parser.add_argument('--operation', type=uuid.UUID, required=True)
     parser.add_argument('--profile')
-    parser.add_argument('--caption', default='')
-    parser.add_argument('--comment', default='', help='ストーリーのコメント欄に投稿する文面')
+    add_caption_arguments(parser)
     parser.add_argument('--preview-only', action='store_true')
     parser.add_argument('--start-relay', action='store_true')
     target = parser.add_mutually_exclusive_group()
@@ -126,7 +122,7 @@ def main():
     target.add_argument('--highlight-id')
     args = parser.parse_args()
     canonical_url(args.url)
-    if any(len(text.encode('utf-16-le')) // 2 > 2200 for text in (args.caption, args.comment)):
+    if len(args.caption.encode('utf-16-le')) // 2 > 2200:
         parser.error('キャプションはUTF-16で2200文字以内です')
     if args.highlight_id and not args.highlight_id.isdecimal():
         parser.error('ハイライトIDは数値で指定してください')

@@ -94,14 +94,43 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 	});
 	it("親しい友達・文面・アカウントが一致した公開応答だけを成功にする", async () => {
 		const f = await fixture([
+			ok({ user: { pk: "123", username: "owner" } }),
 			ok({ media: { pk: "999", user: { pk: "123" }, audience: "besties", caption: { text: "文面" } } }),
 		]);
 		const client = await f.open();
-		expect(await client.publish("1234567890123", account, "close_friends", "文面", signal())).toBe("999");
-		const body = f.fetcher.mock.calls[0]?.[1]?.body as URLSearchParams;
-		expect(body.get("audience")).toBe("besties");
-		expect(body.get("caption")).toBe("文面");
-		expect(body.get("share_to_facebook")).toBe("");
+		const metadata = { mimeType: "video/mp4" as const, width: 720, height: 1280, durationSeconds: 60 };
+		expect(await client.publish("1234567890123", account, "close_friends", "文面", signal(), undefined, metadata)).toBe(
+			"999",
+		);
+		const body = f.fetcher.mock.calls[1]?.[1]?.body as URLSearchParams;
+		const payload = JSON.parse((body.get("signed_body") ?? "").replace(/^SIGNATURE\./, ""));
+		expect(payload.audience).toBe("besties");
+		expect(payload.caption).toBe("");
+		expect(JSON.parse(payload.story_captions)).toEqual([{ text: "文面", is_quick_caption: true, sticker_id: -1 }]);
+		expect(payload.extra).toEqual({ source_width: 720, source_height: 1280 });
+		expect(payload.clips[0].length).toBe(60);
+		expect(f.fetcher.mock.calls[1]?.[0]).toBe("https://i.instagram.com/api/v1/media/configure_to_story/?video=1");
+		expect(payload.share_to_facebook).toBe("");
+	});
+	it("公開応答で省略された投稿時コメントを同じメディアの読み戻しで確認する", async () => {
+		for (const owner of ["123", "456"]) {
+			const media = { pk: "999", user: { pk: "123" }, audience: "besties" };
+			const f = await fixture([
+				ok({ user: { pk: "123", username: "owner" } }),
+				ok({ media }),
+				ok({ items: [{ ...media, user: { pk: owner }, story_captions: [{ text: "文面", is_quick_caption: true }] }] }),
+			]);
+			const result = (await f.open()).publish("1234567890123", account, "close_friends", "文面", signal(), undefined, {
+				mimeType: "image/jpeg",
+				width: 1080,
+				height: 1920,
+				durationSeconds: null,
+			});
+			if (owner === "123") await expect(result).resolves.toBe("999");
+			else await expect(result).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN", mediaId: "999" });
+			expect(f.fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+			expect(f.fetcher.mock.calls[2]?.[0]).toBe("https://i.instagram.com/api/v1/media/999/info/");
+		}
 	});
 	it("限定公開の根拠・文面が欠けた結果やタイムアウトを再送しない", async () => {
 		for (const media of [
@@ -109,12 +138,20 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 			{ pk: "999", user: { pk: "123" }, audience: "besties", caption: { text: "別" } },
 			{ pk: "999", user: { pk: "456" }, audience: "besties", caption: { text: "文面" } },
 		]) {
-			const f = await fixture([ok({ media })]);
+			const f = await fixture([ok({ user: { pk: "123", username: "owner" } }), ok({ media }), ok({ items: [media] })]);
 			const client = await f.open();
-			await expect(client.publish("1234567890123", account, "close_friends", "文面", signal())).rejects.toMatchObject({
+			await expect(
+				client.publish("1234567890123", account, "close_friends", "文面", signal(), undefined, {
+					mimeType: "image/jpeg",
+					width: 1080,
+					height: 1920,
+					durationSeconds: null,
+				}),
+			).rejects.toMatchObject({
 				code: "PUBLICATION_UNKNOWN",
+				mediaId: "999",
 			});
-			expect(f.fetcher).toHaveBeenCalledTimes(1);
+			expect(f.fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
 		}
 		const f = await fixture([]);
 		const client = await f.open();

@@ -46,12 +46,13 @@ python scripts/import-browser-session.py \
 - ハイライト一覧・登録済みメディア：`PolarisProfileStoryHighlightsTrayContentQuery`と`PolarisStoriesV3HighlightsPageQuery`の固定2クエリだけを使います。ページングが完了しない場合は途中結果を返しません。
 - 素材：検証したコピーを固定rupload先へ送ります。動画本体の再エンコードは行いません。
 - 公開：固定の`/api/v1/media/configure_to_story/`を1回だけ呼び、メディアID・所有者・親しい友達の`audience: besties`・指定キャプションを照合します。根拠がなければ`unknown`です。
+- 投稿時コメント：モバイルAPIで実アカウントを照合し、公開要求の`story_captions`に`[{"text":"指定文面","is_quick_caption":true,"sticker_id":-1}]`をJSON文字列で送ります。動画は実際の寸法・長さと`?video=1`を使います。通常の`caption`は空にします。公開応答に指定文面がなければ同じIDの`media/<ID>/info/`を1回読み戻し、所有者・公開範囲・文面を照合します。根拠がなければIDを保持して`unknown`とし、公開要求を再送しません。
 - ハイライト登録：固定の`/api/v1/highlights/highlight:<ID>/edit_reel/`へ対象IDの追加だけを送り、削除・名前・カバーの変更をしません。`applying`保存後に1回だけ呼び、登録済み一覧を読み戻して対象と既存選択を検証します。
-- ストーリーのコメント：通常投稿の `media/<ID>/comment/` と分離し、固定の `media/story_comment/post/` へフォームの `comment_text` と所有者込みの `media_id` を送ります。`media/story_comment/fetch/` の全件読み戻しで、自分の同じ文面を一意に確認できた場合だけ完了します。受付応答だけでは完了にしません。
+- 公開後のコメント（URL投稿Skillからは呼ばない別機能）：通常投稿の `media/<ID>/comment/` と分離し、固定の `media/story_comment/post/` へフォームの `comment_text` と所有者込みの `media_id` を送ります。`media/story_comment/fetch/` の全件読み戻しで、自分の同じ文面を一意に確認できた場合だけ完了します。受付応答だけでは完了にしません。
 
 リダイレクト、追加認証、利用制限では停止します。別ホストへの認証転送、任意URL・任意GraphQLの外部公開、自動再ログインは追加していません。内部APIや固定クエリの仕様が変わった場合はエラーとして停止します。
 
-2026-10-17に、ユーザー指定のYouTube動画の冒頭60秒をURL投稿Skillで縦変換し、HTTPモードで素材アップロード・通常公開・既存「Music」ハイライトへの新規追加と登録後のID照合まで確認しました。2026-10-25には親しい友達での60秒動画の公開と、同じメディアの既存idolハイライト内への追加を読み戻して確認しました。キャプションは保存されませんでした。コメントは通常投稿用経路で対象外と拒否され、専用経路でも受付応答だけで保存を確認できていません。実アカウントでのコメント成功は未確認です。SkillはRelayへ渡す前に横動画を変換し、Relayのアップロード処理自体は動画本体を再エンコードしません。
+2026-10-17に、ユーザー指定のYouTube動画の冒頭60秒をURL投稿Skillで縦変換し、HTTPモードで素材アップロード・通常公開・既存「Music」ハイライトへの新規追加と登録後のID照合まで確認しました。2026-10-25には親しい友達での60秒動画の公開と、同じメディアの既存idolハイライト内への追加を読み戻して確認しました。キャプションは保存されませんでした。コメントは通常投稿用経路で対象外と拒否され、専用経路でも受付応答だけで保存を確認できていません。ユーザーの意図は投稿画面で一緒に添える文面と確認できたため、Skillを投稿時クイックキャプションへ変更しました。この形式での実公開成功はまだ未確認です。SkillはRelayへ渡す前に横動画を変換し、Relayのアップロード処理自体は動画本体を再エンコードしません。
 
 通信形式の参考：
 
@@ -62,3 +63,5 @@ python scripts/import-browser-session.py \
 ストーリー専用コメント経路の調査では、[アプリのコメント投稿処理を再構成したコード](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/com/instagram/reels/comments/repository/StoryCommentsRepository.java)と[応答のパーサー](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/C56214Huh.java)を参照しました。公式のサポート契約ではなく、互換性や実アカウントでの利用可否を保証するものではありません。
 
 旧経路の結果不明は通常のコメントAPI呼び出しで自動再送しません。今回の手動修復では、記録済みのHTTP 400と拒否キー、専用欄の空の全件一覧を照合し、元の状態・日時・拒否理由を`comment.recovery`に残しました。専用経路への送信前も`sending`を永続化し、受付応答だけの場合は`unknown`を維持します。本文や認証情報は回復履歴に含めません。
+
+投稿時クイックキャプションは、アプリの[公開要求builder](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/C64177LSe.java)と[文面serializer](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/C282695Ej.java)を参照しました。公式のAPI契約ではありません。従来の公開後コメントの台帳は保持し、投稿時文面への自動変換・再送は行いません。`--comment`と`--caption`は同義のため、初回からどちらか一方を指定します。

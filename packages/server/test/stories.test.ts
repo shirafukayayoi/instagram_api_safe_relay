@@ -34,6 +34,7 @@ const temp = async () => {
 };
 const account = { id: "123", username: "owner" };
 const backend = (): StoryPublisher => ({
+	supportsStoryCaption: true,
 	getAccount: vi.fn(async () => account),
 	upload: vi.fn(async () => undefined),
 	publish: vi.fn(async () => "999"),
@@ -183,6 +184,17 @@ describe("ジョブと重複防止", () => {
 		expect(f.factory).not.toHaveBeenCalled();
 	});
 
+	it("投稿時コメント非対応の接続ではプレビューとアップロードを止める", async () => {
+		const publisher = backend();
+		delete publisher.supportsStoryCaption;
+		const f = await fixture(publisher);
+		const input = { filePath: f.filePath, caption: "文面" };
+		await expect(f.service.preview("one", input)).rejects.toMatchObject({ code: "COMMENT_UNAVAILABLE" });
+		const job = await f.service.create("one", "unsupported-caption", input);
+		expect(await waitFor(f.service, job.id)).toMatchObject({ state: "failed", errorCode: "COMMENT_UNAVAILABLE" });
+		expect(publisher.upload).not.toHaveBeenCalled();
+		expect(publisher.publish).not.toHaveBeenCalled();
+	});
 	it("キャプションを公開処理へ渡し、同じキーの文面変更を拒否する", async () => {
 		const { service, filePath, publisher } = await fixture();
 		const caption = "コメント🌸\n次の行";

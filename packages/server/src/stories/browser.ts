@@ -1,15 +1,17 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import type { StoryAccount, StoryFeedPostReference, StoryFeedPost } from "instagram-api-safe-contracts";
+import type { StoryAccount, StoryFeedPost, StoryFeedPostReference } from "instagram-api-safe-contracts";
 import { storyAccountSchema } from "instagram-api-safe-contracts";
 import type { Page } from "playwright";
-import { StoryError } from "./errors.js";
 import { finalizeStoryInBrowser } from "./browser-finalize.js";
+import { StoryError } from "./errors.js";
 import type { StoryMedia } from "./media.js";
 
 export type StoryPublisher = {
 	getAccount: () => Promise<StoryAccount>;
 	supportsFeedPost?: boolean;
+	supportsStoryCaption?: boolean;
+	checkStoryCaptionSession?: () => Promise<void>;
 	checkFeedPostSession?: () => Promise<void>;
 	resolveOwnStory?: (
 		account: StoryAccount,

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { HighlightBrowser } from "../highlights/browser.js";
 import type { StoryPublisher } from "../stories/browser.js";
 import { StoryError } from "../stories/errors.js";
+import type { StoryMedia } from "../stories/media.js";
 import type { InstagramHttpClient } from "./client.js";
 
 const execute = promisify(execFile);
@@ -21,11 +22,17 @@ export const createHttpStoryPublisher = async (
 	let uploadAttempted = false;
 	let publishAttempted = false;
 	let closed = false;
+	let uploadedMedia: StoryMedia | undefined;
 	const check = () => {
 		if (closed || signal.aborted) throw new StoryError("INTERRUPTED", "HTTP投稿を中断しました");
 	};
 	return {
 		supportsFeedPost: feedPostSharingEnabled,
+		supportsStoryCaption: true,
+		checkStoryCaptionSession: async () => {
+			check();
+			await client.getMobileAccount(signal);
+		},
 		resolveOwnStory: (account, audience, mediaId, after, before) =>
 			client.resolveOwnStory(account, audience, mediaId, after, before, signal),
 		findOwnStoryComment: (mediaId, text) => client.findOwnStoryComment(mediaId, text, signal),
@@ -68,6 +75,7 @@ export const createHttpStoryPublisher = async (
 			} else await client.uploadPhoto(uploadId, bytes, media.width, media.height, media.mimeType, signal);
 			check();
 			uploaded = true;
+			uploadedMedia = media;
 		},
 		publish: async (account, audience = "all", caption = "", feedPost) => {
 			check();
@@ -77,7 +85,7 @@ export const createHttpStoryPublisher = async (
 			if (current.id !== account.id || current.username !== account.username)
 				throw new StoryError("ACCOUNT_CHANGED", "投稿先アカウントが変わりました");
 			publishAttempted = true;
-			return client.publish(uploadId, account, audience, caption, signal, feedPost);
+			return client.publish(uploadId, account, audience, caption, signal, feedPost, uploadedMedia);
 		},
 		close: async () => {
 			closed = true;

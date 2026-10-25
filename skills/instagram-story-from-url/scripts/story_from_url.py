@@ -42,6 +42,12 @@ def api(endpoint, profile, key, payload=None):
     return request("v1/" + endpoint, profile, key, payload)
 
 
+def add_caption_arguments(parser):
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--caption", default="", help="ストーリーの投稿時に添える文面")
+    group.add_argument("--comment", dest="caption", help="--captionと同じ、投稿時に添える文面")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("url", nargs="?")
@@ -62,8 +68,7 @@ def main():
     target.add_argument("--highlight-id", help="投稿後に追加する既存ハイライトの数値ID")
     parser.add_argument("--clip-start", type=float, help="明示指定された切り出し開始秒")
     parser.add_argument("--clip-end", type=float, help="明示指定された切り出し終了秒")
-    parser.add_argument("--caption", default="", help="従来の投稿メタデータ。コメント欄には--commentを使います")
-    parser.add_argument("--comment", default="", help="公開後に自分のストーリーのコメント欄へ投稿する文面")
+    add_caption_arguments(parser)
     args = parser.parse_args()
     if any(v is not None and (not math.isfinite(v) or v < 0) for v in (args.clip_start, args.clip_end)):
         parser.error("切り出し秒数は0以上の有限数で指定してください")
@@ -81,7 +86,7 @@ def main():
         return
     if not all((args.url, args.audience, args.operation)):
         parser.error("投稿・取得にはURL、--audience、--operationが必要です")
-    if any(len(text.encode("utf-16-le")) // 2 > 2200 for text in (args.caption, args.comment)):
+    if len(args.caption.encode("utf-16-le")) // 2 > 2200:
         parser.error("caption・commentはUTF-16で2200文字以内にしてください")
     if args.highlight_only and not (args.highlight or args.highlight_id):
         parser.error("--highlight-onlyには--highlightまたは--highlight-idが必要です")
@@ -109,6 +114,8 @@ def run(args, directory):
     intent = {"url": args.url, "audience": args.audience, "profile": args.profile, "caption": getattr(args, "caption", "")}
     data = json.loads(ledger.read_text(encoding="utf-8")) if ledger.exists() else {
         **intent, "key": "url-story-" + str(args.operation)}
+    if data.get("comment"):
+        raise RuntimeError("旧方式の公開後コメントを含む操作です。投稿時コメントへの変換・追記・再投稿は行いません")
     clip = {"start": getattr(args, "clip_start", None), "end": getattr(args, "clip_end", None)}
     clip = clip if any(v is not None for v in clip.values()) else None
     if data.get("clip") != clip:
@@ -126,12 +133,6 @@ def run(args, directory):
         if data.get("highlightIntent") and data["highlightIntent"] != target:
             raise RuntimeError("同じ操作のハイライト登録先を変更できません")
         data["highlightIntent"] = target
-    comment = getattr(args, "comment", "")
-    if data.get("comment", "") != comment:
-        if "comment" in data or ledger.exists():
-            raise RuntimeError("同じ操作IDのコメント本文を変更できません")
-    if comment:
-        data["comment"] = comment
     save(ledger, data)
     if getattr(args, "highlight_only", False) and not data.get("job"):
         raise RuntimeError("公開済みジョブがありません。ハイライト登録だけでは投稿しません")
@@ -201,17 +202,6 @@ def poll_job(args, directory, data):
         data["result"] = result
         save(ledger, data)
         if result["state"] in {"published", "failed", "unknown"}:
-            comment_error = None
-            if result["state"] == "published" and data.get("comment") and not getattr(args, "preview_only", False):
-                try:
-                    result = api("story-jobs/" + data["job"] + "/comments", args.profile, data["key"] + ":comment",
-                                 {"text": data["comment"]})["data"]
-                    data["result"] = result
-                    save(ledger, data)
-                    if result.get("comment", {}).get("state") != "completed":
-                        comment_error = "コメント送信の成功を確認できません。再送せず同じ操作IDで照会してください"
-                except RuntimeError as error:
-                    comment_error = str(error)
             print(json.dumps(result, ensure_ascii=False))
             if result["state"] != "published":
                 raise RuntimeError("公開成功を確認できません。再投稿せずInstagram上で確認してください")
@@ -221,8 +211,6 @@ def poll_job(args, directory, data):
                 raise RuntimeError("投稿IDまたは公開範囲の確認が取れません。再投稿せずInstagram上で確認してください")
             if data.get("highlightIntent") and not getattr(args, "preview_only", False):
                 register_highlight(args, directory, data)
-            if comment_error:
-                raise RuntimeError(comment_error)
             return
         if time.monotonic() >= deadline:
             print("処理継続中です。同じ操作IDで状態確認を再開してください: " + data["job"])
