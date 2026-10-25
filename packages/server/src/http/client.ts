@@ -366,6 +366,8 @@ export class InstagramHttpClient {
 				(c) =>
 					object(c.user).pk !== undefined &&
 					numericId(object(c.user).pk) === this.#session.account.id &&
+					numericId(c.media_id) === mediaId &&
+					c.is_created_by_media_owner === true &&
 					c.text === text,
 			);
 		if (matches.length > 1) throw new StoryError("COMMENT_UNKNOWN", "同じコメントが複数あり、一意に確認できません");

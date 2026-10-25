@@ -67,3 +67,9 @@ python scripts/import-browser-session.py \
 投稿時クイックキャプションは、アプリの[公開要求builder](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/C64177LSe.java)と[文面serializer](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/C282695Ej.java)を参照しました。公式のAPI契約ではありません。従来の公開後コメントの台帳は保持し、投稿時文面への自動変換・再送は行いません。`--comment`と`--caption`は同義のため、初回からどちらか一方を指定します。
 
 ユーザーのスマホでも、この再投稿の文面が表示されないことを確認しました。投稿時コメントは失敗として扱います。アプリの[クイックキャプション生成処理](https://github.com/carter-0/instagram-decompiled/blob/52284f22a48cecfd448ae9516cf49bcdfaa03db2/sources/X/AnonymousClass8ME.java)と比較し、`text`、`is_quick_caption: true`、`sticker_id: -1`の形式は一致していますが、それだけで保存・表示されることは保証されません。必要な条件は未特定であり、推測した追加パラメーターで実公開を繰り返しません。次の切り分けには、アプリで文面表示に成功した既存ストーリーのデータとの比較が必要です。
+
+## スマホの成功例との比較（2026-10-25）
+
+同じアカウントの親しい友達ストーリーで、ユーザーが投稿時に添えた文面を確認しました。`media/<ID>/info/` の`caption`はnullで、`story_captions`もありませんでした。一方、自分のストーリー一覧には`story_comments`があり、専用の`media/story_comment/fetch/`でも同じコメントID・本文・投稿者ID・メディアIDと`is_created_by_media_owner: true`を確認できました。必要な機能は、この本人コメントであり、クイックキャプションではありません。成功例の本文・認証値・素材URLはログやリポジトリへ保存していません。
+
+Relayで公開済みの自分の60秒動画へ、専用経路の2項目フォームで指定文面を1回追記しましたが、応答は`status: ok`のみで、保存を確認できませんでした。動画の削除・再公開は行っていません。この結果不明は専用のローカル記録に保持し、再送しません。送信成功は未解決のため、文面付き新規投稿の停止を維持します。読み戻しは本文と本人IDだけでなく、対象メディアIDと本人コメントの印も照合します。

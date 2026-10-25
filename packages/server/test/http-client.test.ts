@@ -369,8 +369,25 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 describe("自分のストーリーのコメント欄", () => {
 	const story = { pk: "999", user: { pk: "123" }, taken_at: 123, audience: "besties", comments_disabled: false };
 	const own = { user: { pk: "123", username: "owner" } };
-	const comment = { pk: "777", user: { pk: "123" }, text: "文面" };
+	const comment = { pk: "777", user: { pk: "123" }, text: "文面", media_id: "999", is_created_by_media_owner: true };
 	const creationKey = "d751f3c8-27ea-4353-8bf5-eb7747ac3ac5";
+	it("別メディアや本人コメントの根拠がない文面を成功とみなさない", async () => {
+		for (const mismatch of [
+			{ ...comment, media_id: "888" },
+			{ ...comment, is_created_by_media_owner: false },
+			{ ...comment, is_created_by_media_owner: undefined },
+		]) {
+			const f = await fixture([
+				ok(own),
+				ok({ reel: { user: { pk: "123" }, items: [story] } }),
+				ok({ comments: [mismatch], has_more_comments: false }),
+			]);
+			const client = await f.open();
+			await client.resolveOwnStory(account, "close_friends", "999", 0, 0, signal());
+			expect(await client.findOwnStoryComment("999", "文面", signal())).toBeNull();
+			expect(f.fetcher.mock.calls.every(([, options]) => options?.method === "GET")).toBe(true);
+		}
+	});
 	it("所有者と公開範囲を照合し、台帳保存後に1回送って読み戻す", async () => {
 		const f = await fixture([
 			ok(own),
