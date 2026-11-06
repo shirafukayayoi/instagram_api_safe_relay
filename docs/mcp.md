@@ -33,6 +33,8 @@ Pythonの絶対パスを指定すると、別環境のPythonを起動する間�
 
 接続・ダウンロード・公開の途中でMCPが切れた場合も元の操作IDで状態を調べます。失敗した子プロセスの標準出力・標準エラーには素材URLなどが含まれ得るため、MCPへ返しません。`commandSucceeded` だけで公開成功と判断せず、`result.state: published` とアカウント・公開範囲・メディアIDを確認します。ハイライトは別に `highlightResult.state: completed` を確認します。
 
+子プロセスには標準入力も `DEVNULL` を指定します。WindowsでMCPの通信パイプを継承すると、子Pythonが起動時に待ち続ける既知の問題があるためです。テストでは実際のstdio MCPから子Pythonを起動し、標準入力がEOFになることを確認します。参考：[公式SDKの不具合報告](https://github.com/modelcontextprotocol/python-sdk/issues/671)。
+
 DM、削除、任意URLの転送、任意GraphQL、ログイン・2FAの自動化は提供しません。
 
 ## 検証

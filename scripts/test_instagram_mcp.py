@@ -174,6 +174,32 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(tools["instagram_status"].outputSchema)
         self.assertNotIn("request", tools)
 
+    async def test_stdio_child_receives_eof_without_consuming_protocol(self):
+        # MCPの実際の標準入力パイプを子Pythonへ継承しないことを確認する。
+        harness = self.root / "stdio_child_probe.py"
+        harness.write_text(
+            "import sys\n"
+            f"sys.path.insert(0, {str(Path(server.__file__).parent)!r})\n"
+            "from pathlib import Path\n"
+            "from typing import Any\n"
+            "import instagram_mcp as target\n"
+            "target._ensure_relay = lambda: None\n"
+            f"target.relay.ROOT = Path({str(self.root)!r})\n"
+            "@target.mcp.tool()\n"
+            "async def probe_child() -> dict[str, Any]:\n"
+            f" return await target._run([sys.executable, '-c', \"import sys; assert sys.stdin.read() == ''\"], {self.operation_id!r})\n"
+            "target.mcp.run(transport='stdio')\n",
+            encoding="utf-8",
+        )
+        params = StdioServerParameters(command=sys.executable, args=["-B", str(harness)],
+                                       env=dict(os.environ, PYTHONUTF8="1"))
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                result = await session.call_tool("probe_child", {}, read_timeout_seconds=timedelta(seconds=10))
+                self.assertFalse(result.isError)
+                self.assertTrue(result.structuredContent["commandSucceeded"])
+
 
 async def stdio_check(live=False):
     params = StdioServerParameters(command=sys.executable, args=["-B", str(Path(server.__file__).resolve())],

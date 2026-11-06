@@ -151,7 +151,7 @@ async def _run(args, operation_id):
     await asyncio.to_thread(_ensure_relay)
     process = await asyncio.create_subprocess_exec(
         *args, cwd=REPOSITORY, env=dict(os.environ, PYTHONUTF8="1"),
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     try:
