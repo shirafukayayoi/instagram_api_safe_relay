@@ -42,9 +42,29 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         (directory / "operation.json").write_text(json.dumps(self.data), encoding="utf-8")
 
     async def test_status_waits_for_profile_readiness_after_cold_start(self):
-        with patch.object(server, "_ensure_relay"), patch.object(server.relay, "diagnose", return_value={"ready": True}) as diagnose:
-            self.assertTrue(server.instagram_status()["ready"])
-            diagnose.assert_called_once_with(start=True)
+        states = iter(("starting", "recovering", "ready"))
+        observed = []
+        account = {"id": "123", "username": "test"}
+
+        def request(endpoint, *args, **kwargs):
+            if endpoint == "profiles":
+                state = next(states)
+                observed.append(state)
+                return {"profiles": [{"name": "account1", "state": state}]}
+            if endpoint == "v1/accounts":
+                return {"data": {"selected": {"profile": "account1", "account": account}}}
+            raise AssertionError("診断以外の通信が呼ばれました")
+
+        with patch.object(server, "_ensure_relay"), \
+                patch.object(server.relay, "configuration", return_value="account1"), \
+                patch.object(server.relay, "ensure_running"), patch.object(server.relay, "token", return_value="test"), \
+                patch.object(server.relay.shutil, "which", return_value="/test/bin/tool"), \
+                patch.object(server.relay.importlib.util, "find_spec", return_value=object()), \
+                patch.object(server.relay.time, "sleep"), patch.object(server.relay, "request", side_effect=request):
+            result = server.instagram_status()
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["account"], account)
+        self.assertEqual(observed, ["starting", "recovering", "ready"])
 
     async def test_preview_never_calls_publish(self):
         with patch.object(server, "_profile", return_value="account1"), patch.object(server, "_run", new_callable=AsyncMock) as run:
