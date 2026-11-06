@@ -15,13 +15,25 @@ description: YouTube・TikTok動画の投稿と、Instagram投稿URLの元投稿
 
 Relay本体は `/path/to/instagram_api_safe_relay`。このPCは `browser.type: "http"` で設定済み。通常運用でブラウザーを起動しない。投稿先は保存した選択を一覧・プレビューで確認し、固定のアカウントだと決めつけない。
 
-別環境では `INSTAGRAM_RELAY_REPOSITORY` にRelayのルートを指定する。リポジトリ内の配布版は親ディレクトリから検出でき、未指定・未検出時の旧既定値は `C:\Users\example\Documents\Program\instagram_api_safe_relay`。Python、yt-dlp、ffmpeg、ffprobe、Node.jsが必要。yt-dlpは実行に使うPythonへ `python -m pip install -U "yt-dlp[default,curl-cffi]"` で導入する。
+別環境では `INSTAGRAM_RELAY_REPOSITORY` にRelayのルートを指定する。リポジトリ内の配布版は親ディレクトリから検出でき、未指定・未検出時の既定値はホーム配下の `Documents/Program/instagram_api_safe_relay`。Python、yt-dlp、ffmpeg、ffprobe、Node.jsが必要。yt-dlpは実行に使うPythonへ `python -m pip install -U "yt-dlp[default,curl-cffi]"` で導入する。
 
 `settings.json` の `stories.enabled` を有効にし、`work/story-smoke` を素材許可ディレクトリに含める。Bearerは環境変数またはRelayのGit管理外 `.env` から読む。`.env`、`settings.json`、`private_sessions/`、専用ブラウザープロファイル、投稿・ハイライト台帳、実行環境を保持し、認証情報を出力・Git・SkillのDrive同期へ含めない。
 
 ## ブラウザーなしのHTTPモード
 
 ユーザーが内部APIの直接利用を許可した環境では、Relayの `profiles[].browser` を `{"type":"http","sessionFile":"../../private_sessions/account1.json"}` に設定できる。HTTPモードでもこのSkillの引数・台帳・プレビュー・親しい友達・コメント・ハイライトの扱いは共通。Chromiumを起動せず、固定のHTTP通信だけで処理する。設定・専用ブラウザーからの移行・手動再ログインはRelayの `docs/http-mode.md` に従う。認証ファイルはローカルのGit管理外へ権限600で保存し、SkillのDrive同期対象へ入れない。ログイン・2FA・challengeは手動で行い、自動再ログイン・書き込み要求の再送はしない。
+
+## MCP経由での実行
+
+`instagram` MCPのツールを利用できる場合は、URL投稿にMCPを優先する。利用できない場合は、このSkillのローカルCLIを使う。同じ依頼を両方から新規操作として送らない。
+
+最初に `instagram_status` と `instagram_accounts` で接続・選択中の投稿先を確認する。アカウントの呼称、コメント、横動画の変換、切り出し、公開範囲はこのSkillの規則を使う。MCPでもブラウザーを起動せず、既存HTTP Relayとローカル認証を再利用する。
+
+`instagram_preview_url` の初回からURL、`audience`、`comment`、`clip_start` / `clip_end`、指定されたハイライトを渡す。これは素材準備とプレビューだけで公開しない。明示的な投稿依頼がある場合は、返された `operationId`、`preview.account.id`、`preview.audience` を、それぞれ `instagram_publish_operation` の `operation_id`、`expected_account_id`、`expected_audience` に渡す。プレビュー期限は10分で、期限切れは同じ操作ID・同じ引数でプレビューを更新する。
+
+処理中・成功済み・結果不明は `instagram_operation_status` で照会し、新IDで再投稿しない。`commandSucceeded` だけで成功と判断せず、`result.state: published` と投稿先・公開範囲・メディアIDを照合する。ハイライトは `highlightResult.state` で別に確認する。`instagram_resume_highlight` は初回から登録先を指定した動画の同じ登録だけを再開し、`unknown` を再送しない。公開後の追加コメントPOSTは呼ばない。
+
+MCPの依存関係と接続設定はRelay側の `docs/mcp.md` を参照する。MCPのコード・仮想環境・認証ファイル・Codex設定はSkillのDrive同期に含めない。
 
 ## 起動・診断
 

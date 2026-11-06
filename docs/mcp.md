@@ -12,6 +12,19 @@ codex mcp add instagram --env PYTHONUTF8=1 -- python -B '<リポジトリ>/scrip
 
 Pythonの絶対パスを指定すると、別環境のPythonを起動する間違いを防げます。`~/.codex/config.toml` の `[mcp_servers.instagram]` に `startup_timeout_sec = 30` と `tool_timeout_sec = 600` を設定します。設定の反映後、MCPクライアントを再接続します。起動時の作業ディレクトリには依存しません。
 
+Linuxでも、yt-dlpなどを導入した仮想環境のPythonを指定します。デスクトップアプリからNode.jsを見つけられない場合は、MCP専用の`PATH`にNode.js・仮想環境・ffmpegのあるディレクトリを指定してください。認証値を登録する必要はありません。
+
+```bash
+relay_repo='/absolute/path/to/instagram_api_safe_relay'
+"$relay_repo/.venv/bin/python" -m pip install -r "$relay_repo/scripts/mcp-requirements.txt"
+codex mcp add instagram --env PYTHONUTF8=1 \
+  --env "PATH=/absolute/path/to/node/bin:$relay_repo/.venv/bin:/usr/local/bin:/usr/bin:/bin" \
+  -- "$relay_repo/.venv/bin/python" -B "$relay_repo/scripts/instagram_mcp.py"
+codex mcp get instagram
+```
+
+`instagram_status`は、Relayのhealth応答だけでなく、選択中プロファイルの起動時のアカウント照合を待って診断します。ログイン・追加認証が必要な場合はその状態を返し、自動ログインは行いません。
+
 ## ツール
 
 | ツール | 処理 |
@@ -45,4 +58,4 @@ python scripts/test_instagram_mcp.py
 python scripts/test_instagram_mcp.py --live
 ```
 
-SDKの参照：[公式Python SDK 1.26.0](https://github.com/modelcontextprotocol/python-sdk/tree/v1.26.0)。Codex登録の参照：[MCP設定](https://learn.chatgpt.com/docs/mcp)。
+SDKの参照：[公式Python SDK 1.26.0](https://github.com/modelcontextprotocol/python-sdk/tree/v1.26.0)。Codex登録の参照：[MCP設定](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。

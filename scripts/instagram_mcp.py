@@ -174,7 +174,8 @@ async def _run(args, operation_id):
 def instagram_status() -> dict[str, Any]:
     """HTTP Relayを必要時だけ起動し、依存ツール・接続・選択中の投稿先を診断する。"""
     _ensure_relay()
-    return relay.diagnose()
+    # healthの応答後もプロファイルは準備中の場合があるため、起動時の照合を待つ。
+    return relay.diagnose(start=True)
 
 
 @mcp.tool(annotations=READ)

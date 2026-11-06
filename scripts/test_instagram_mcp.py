@@ -41,6 +41,11 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         directory.mkdir(exist_ok=True)
         (directory / "operation.json").write_text(json.dumps(self.data), encoding="utf-8")
 
+    async def test_status_waits_for_profile_readiness_after_cold_start(self):
+        with patch.object(server, "_ensure_relay"), patch.object(server.relay, "diagnose", return_value={"ready": True}) as diagnose:
+            self.assertTrue(server.instagram_status()["ready"])
+            diagnose.assert_called_once_with(start=True)
+
     async def test_preview_never_calls_publish(self):
         with patch.object(server, "_profile", return_value="account1"), patch.object(server, "_run", new_callable=AsyncMock) as run:
             await server.instagram_preview_url("https://youtu.be/example", "close_friends", comment="テスト")
