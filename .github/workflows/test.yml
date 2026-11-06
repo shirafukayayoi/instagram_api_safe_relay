@@ -25,4 +25,9 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm lint
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install -r scripts/mcp-requirements.txt
+      - run: python scripts/test_instagram_mcp.py
 
