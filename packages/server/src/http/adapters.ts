@@ -56,6 +56,8 @@ export const createHttpStoryPublisher = async (
 			if (bytes.length !== media.size || createHash("sha256").update(bytes).digest("hex") !== media.sha256)
 				throw new StoryError("MEDIA_INVALID", "検証済み素材が変更されました");
 			if (media.mimeType === "video/mp4") {
+				// 文面なしの動画もモバイル形式で公開するため、アップロード前に照合する。
+				await client.getMobileAccount(signal);
 				// 動画本体は変換せず、必要なサムネイル1枚だけを生成する。
 				let thumbnail: Buffer;
 				try {

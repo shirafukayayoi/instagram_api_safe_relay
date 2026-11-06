@@ -728,8 +728,8 @@ export class InstagramHttpClient {
 		metadata?: Pick<StoryMedia, "width" | "height" | "mimeType" | "durationSeconds">,
 	): Promise<string> {
 		validateId(id);
-		const native = Boolean(feedPost) || caption !== "";
 		const video = metadata?.mimeType === "video/mp4";
+		const native = video || Boolean(feedPost) || caption !== "";
 		if (caption !== "" && !feedPost && !metadata)
 			throw new StoryError("MEDIA_INVALID", "投稿時コメントには検証済みの素材情報が必要です");
 		if (native) {
@@ -774,7 +774,7 @@ export class InstagramHttpClient {
 			share_to_fb_destination_type: "USER",
 			...(audience === "close_friends" ? { audience: "besties" } : {}),
 		};
-		// 投稿時コメントとカードは、アプリが使うモバイル形式で公開する。
+		// 動画は文面が空でも、実寸・尺とvideo=1を持つモバイル形式で公開する。
 		const nativeBody = {
 			...body,
 			_uid: this.#session.account.id,

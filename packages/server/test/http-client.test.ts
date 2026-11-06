@@ -145,6 +145,30 @@ describe("ブラウザーを使わない固定HTTP通信", () => {
 			);
 		}
 	});
+	it("文面なしの動画もモバイル形式で実寸・尺・親しい友達を送り、コメントを追加しない", async () => {
+		const f = await fixture([
+			ok({ user: { pk: "123", username: "owner" } }),
+			ok({ media: { pk: "999", user: { pk: "123" }, audience: "besties" } }),
+		]);
+		const metadata = { mimeType: "video/mp4" as const, width: 720, height: 1280, durationSeconds: 15.066667 };
+		expect(
+			await (await f.open()).publish("1234567890123", account, "close_friends", "", signal(), undefined, metadata),
+		).toBe("999");
+		const call = f.fetcher.mock.calls[1];
+		expect(call?.[0]).toBe("https://i.instagram.com/api/v1/media/configure_to_story/?video=1");
+		const body = call?.[1]?.body as URLSearchParams;
+		const payload = JSON.parse((body.get("signed_body") ?? "").replace(/^SIGNATURE\./, ""));
+		expect(payload).toMatchObject({
+			audience: "besties",
+			caption: "",
+			original_media_type: "video",
+			length: 15.066667,
+			extra: { source_width: 720, source_height: 1280 },
+		});
+		expect(payload.comment_as_caption).toBeUndefined();
+		expect(payload.use_comment_as_caption_type).toBeUndefined();
+		expect(f.fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+	});
 	it("限定公開の根拠・文面が欠けた結果やタイムアウトを再送しない", async () => {
 		for (const media of [
 			{ pk: "999", user: { pk: "123" } },

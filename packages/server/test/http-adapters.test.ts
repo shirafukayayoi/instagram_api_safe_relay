@@ -28,6 +28,31 @@ const fake = () => ({
 const signal = () => new AbortController().signal;
 
 describe("HTTP投稿アダプター", () => {
+	it("文面なし動画もアップロード前にモバイル認証を確認し、失敗時は素材を送らない", async () => {
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ig-video-preflight-"));
+		dirs.push(dir);
+		const assetPath = path.join(dir, "video.mp4");
+		const bytes = Buffer.from("video");
+		await fs.writeFile(assetPath, bytes);
+		const client = fake();
+		client.getMobileAccount.mockRejectedValueOnce(new StoryError("SESSION_NOT_READY", "モバイル認証が必要です"));
+		const publisher = await createHttpStoryPublisher(client as unknown as InstagramHttpClient, signal());
+		await expect(
+			publisher.upload({
+				assetPath,
+				mimeType: "video/mp4",
+				size: bytes.length,
+				sha256: createHash("sha256").update(bytes).digest("hex"),
+				width: 720,
+				height: 1280,
+				durationSeconds: 15,
+			}),
+		).rejects.toMatchObject({ code: "SESSION_NOT_READY" });
+		expect(client.getMobileAccount).toHaveBeenCalledTimes(1);
+		expect(client.uploadVideo).not.toHaveBeenCalled();
+		expect(client.uploadPhoto).not.toHaveBeenCalled();
+		expect(client.publish).not.toHaveBeenCalled();
+	});
 	it("投稿時コメントの前にモバイルの実アカウントを照合する", async () => {
 		const client = fake();
 		const publisher = await createHttpStoryPublisher(client as unknown as InstagramHttpClient, signal());
