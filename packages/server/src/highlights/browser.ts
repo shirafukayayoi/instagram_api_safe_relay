@@ -5,6 +5,7 @@ import { StoryError } from "../stories/errors.js";
 
 export type HighlightBrowser = {
 	list: () => Promise<{ account: StoryAccount; highlights: Highlight[] }>;
+	contents: (highlight: Highlight) => Promise<string[]>;
 	add: (
 		highlight: Highlight,
 		mediaId: string,
@@ -115,9 +116,15 @@ export const createHighlightBrowser = async (source: Page, signal: AbortSignal):
 		);
 		return { account: current, highlights };
 	};
+	// 編集画面を開くが保存しない読み取り。unknown・failedの有無確認だけに使う。
+	const contents = async (highlight: Highlight): Promise<string[]> => {
+		await openEditor(highlight);
+		return await selectedIds();
+	};
 	try {
 		return {
 			list,
+			contents,
 			add: async (highlight, mediaId, expected, beforeSave) => {
 				const own = await list();
 				await checkAccount(expected);

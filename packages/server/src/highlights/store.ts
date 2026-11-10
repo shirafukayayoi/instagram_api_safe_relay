@@ -104,11 +104,14 @@ export class HighlightStore {
 
 	forTarget(profile: string, highlightId: string, mediaId: string): HighlightRecord | undefined {
 		this.assertHealthy();
-		const record = [...this.#records.values()].find(
-			(entry) =>
-				entry.job.profile === profile && entry.job.highlight.id === highlightId && entry.job.mediaId === mediaId,
-		);
-		return record ? structuredClone(record) : undefined;
+		const records = [...this.#records.values()]
+			.filter(
+				(entry) =>
+					entry.job.profile === profile && entry.job.highlight.id === highlightId && entry.job.mediaId === mediaId,
+			)
+			.sort((a, b) => (a.job.createdAt < b.job.createdAt ? 1 : -1));
+		// 再試行を含めて最新の試行を返す。旧ジョブは台帳に保持される。
+		return records[0] ? structuredClone(records[0]) : undefined;
 	}
 
 	assertHealthy(): void {

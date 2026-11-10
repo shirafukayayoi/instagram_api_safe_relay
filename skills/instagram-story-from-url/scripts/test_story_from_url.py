@@ -206,16 +206,49 @@ class StoryTests(unittest.TestCase):
             story.register_highlight(self.args, self.directory, self.data)
             api.assert_called_once_with("highlight-jobs/" + JOB, "account1", "same-key:highlight")
 
-    def test_unknown_highlight_does_not_create_another_job(self):
-        responses = self.highlight_responses("unknown")
+    def unknown_responses(self, tray_ids):
+        account = {"id": "123", "username": "owner"}
+        target = {"id": "456", "title": "idol"}
+        self.data.update(job=JOB, result={"state": "published", "account": account, "mediaId": "999"},
+                         highlightIntent={"name": "idol", "id": None})
+        result = {"id": JOB, "highlight": target, "storyJobId": JOB, "account": account,
+                  "mediaId": "999", "audience": "close_friends", "profile": "account1", "state": "unknown"}
+        tray = {"data": {"account": account, "highlight": target, "mediaIds": tray_ids}}
+        return [{"data": {"account": account, "highlights": [target]}},
+                {"data": {"id": JOB}}, {"data": result}, tray]
+
+    def test_unknown_highlight_verifies_tray_then_retries_once(self):
+        retry_job = "34f00393-097d-4f64-85fc-b112a89ff759"
+        responses = self.unknown_responses([])
+        responses.append({"data": {"id": retry_job}})
+        responses.append({"data": {**responses[2]["data"], "id": retry_job, "state": "completed"}})
+        with patch.object(story, "api", side_effect=responses) as api:
+            story.register_highlight(self.args, self.directory, self.data)
+        calls = api.call_args_list
+        self.assertEqual(calls[3].args[0], "highlights/456/stories")
+        self.assertEqual(calls[4].args[2], "same-key:highlight-retry1")
+        self.assertEqual(self.data["highlightJob"], retry_job)
+        self.assertEqual(len(self.data["highlightAttempts"]), 1)
+        self.assertFalse(self.data["highlightVerified"]["present"])
+
+    def test_unknown_highlight_present_in_tray_stops_without_retry(self):
+        responses = self.unknown_responses(["999"])
+        with patch.object(story, "api", side_effect=responses) as api:
+            story.register_highlight(self.args, self.directory, self.data)
+        self.assertTrue(self.data["highlightVerified"]["present"])
+        self.assertNotIn("highlightAttempts", self.data)
+
+    def test_unknown_highlight_retry_limit_stops(self):
+        responses = self.unknown_responses([])
+        self.data["highlightJob"] = JOB
+        self.data["highlightTarget"] = {"id": "456", "title": "idol"}
+        self.data["highlightAttempts"] = [
+            {"job": JOB, "state": "unknown", "errorCode": "PUBLICATION_UNKNOWN",
+             "tray": {"present": False, "checkedAt": "t"}} for _ in range(3)]
+        del responses[0:2]
         with patch.object(story, "api", side_effect=responses):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaisesRegex(RuntimeError, "上限"):
                 story.register_highlight(self.args, self.directory, self.data)
-        with patch.object(story, "api", return_value=responses[-1]) as api:
-            with self.assertRaises(RuntimeError):
-                story.register_highlight(self.args, self.directory, self.data)
-            self.assertEqual(api.call_count, 1)
-            self.assertTrue(api.call_args.args[0].startswith("highlight-jobs/"))
 
     def test_duplicate_title_rejects_without_registering(self):
         responses = self.highlight_responses()

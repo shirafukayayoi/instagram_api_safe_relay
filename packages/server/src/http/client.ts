@@ -185,6 +185,15 @@ export class InstagramHttpClient {
 					Referer: "https://www.instagram.com/",
 					...extraHeaders,
 				};
+		if (body instanceof URLSearchParams && !mobile) {
+			// Webアプリ（PolarisInstapi + SprinkleConfig）と同じjazoestをPOSTへ添える。
+			const csrf = this.#cookie("csrftoken");
+			if (csrf && !body.has("jazoest")) {
+				let sum = 0;
+				for (let index = 0; index < csrf.length; index++) sum += csrf.charCodeAt(index);
+				body.set("jazoest", `2${sum}`);
+			}
+		}
 		try {
 			// fetchには再試行を実装しない。認証付きリダイレクトも追跡しない。
 			const response = await (this.#options.fetch ?? fetch)(`https://${host}${endpoint}`, {
@@ -215,10 +224,15 @@ export class InstagramHttpClient {
 				return { html: await response.text() };
 			}
 			let data: Json;
+			const raw = (await response.text()).replace(/^for \(;;\);/, "");
 			try {
-				data = object(parseJson((await response.text()).replace(/^for \(;;\);/, "")));
+				data = object(parseJson(raw));
 			} catch {
-				throw new StoryError("CATALOG_STALE", "Instagramの応答形式を確認できません");
+				// 認証値を含まない応答先頭だけを残し、応答形式の変化を調査できるようにする。
+				throw new StoryError(
+					"CATALOG_STALE",
+					`Instagramの応答形式を確認できません: HTTP ${response.status} ${raw.slice(0, 200)}`,
+				);
 			}
 			if (data.challenge || data.message === "challenge_required" || data.message === "checkpoint_required") {
 				this.#options.onSessionError?.("challenge_required");
@@ -243,8 +257,11 @@ export class InstagramHttpClient {
 					: endpoint === "/graphql/query"
 						? !data.data || data.errors || data.error
 						: data.status !== "ok")
-			)
-				throw new StoryError("CATALOG_STALE", "Instagramによる受付を確認できません");
+			) {
+				// 認証値を含まない応答概要を残し、受理されなかった理由を調査できるようにする。
+				const summary = JSON.stringify(data).slice(0, 400);
+				throw new StoryError("CATALOG_STALE", `Instagramによる受付を確認できません: ${summary}`);
+			}
 			await this.#refreshCookies(response.headers);
 			return data;
 		} catch (error) {
@@ -644,18 +661,46 @@ export class InstagramHttpClient {
 			return pk;
 		});
 	}
-	async addHighlightStory(id: string, mediaId: string, signal: AbortSignal): Promise<void> {
+	async addHighlightStory(
+		id: string,
+		mediaId: string,
+		signal: AbortSignal,
+		title: string | undefined = undefined,
+	): Promise<void> {
 		validateId(id);
 		validateId(mediaId);
+		// Webのedit_reelはPOSTがボット判定で遮断されるため、投稿実績のあるモバイルAPIで登録する。
+		// added_media_idsはユーザーID接尾辞なしのメディアID配列（instagrapiと同じ形式）。
+		if (!this.#session.mobile) await this.#mobileHeaders();
+		const payload: Record<string, unknown> = {
+			source: "self_profile",
+			_uid: this.#session.account.id,
+			_uuid: this.#session.mobile?.uuid ?? "",
+			added_media_ids: JSON.stringify([mediaId]),
+			removed_media_ids: "[]",
+			supported_capabilities_new: JSON.stringify([
+				{
+					value:
+						"119.0,120.0,121.0,122.0,123.0,124.0,125.0,126.0,127.0,128.0," +
+						"129.0,130.0,131.0,132.0,133.0,134.0,135.0,136.0,137.0,138.0," +
+						"139.0,140.0,141.0,142.0",
+					name: "SUPPORTED_SDK_VERSIONS",
+				},
+				{ value: "14", name: "FACE_TRACKER_VERSION" },
+				{ value: "ETC2_COMPRESSION", name: "COMPRESSION" },
+				{ value: "gyroscope_enabled", name: "gyroscope" },
+			]),
+		};
+		// タイトルは照合済みの現在値をそのまま送り、上書き変更はしない。
+		if (title) payload.title = title;
 		await this.#json(
-			"www.instagram.com",
+			"i.instagram.com",
 			`/api/v1/highlights/highlight:${id}/edit_reel/`,
 			signal,
-			new URLSearchParams({
-				source: "story_viewer_profile",
-				added_media_ids: JSON.stringify([`${mediaId}_${this.#session.account.id}`]),
-				removed_media_ids: "[]",
-			}),
+			new URLSearchParams({ signed_body: `SIGNATURE.${JSON.stringify(payload)}` }),
+			{},
+			"json",
+			true,
 		);
 	}
 	async uploadPhoto(id: string, bytes: Uint8Array, width: number, height: number, mime: string, signal: AbortSignal) {

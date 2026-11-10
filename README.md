@@ -185,7 +185,7 @@ MIT License。本プロジェクトの構造と一部の実装方針は [fa0311/
 
 ## ハイライト登録
 
-Relayで公開済みのストーリーを、自分の既存ハイライトへ追加できます。URL投稿Skillの`--highlight`で投稿後の登録まで実行できます。[API・再開と重複防止・検証範囲](docs/highlights.md)と[配布用Skill](skills/instagram-story-from-url/SKILL.md)を参照してください。
+Relayで公開済みのストーリーを、自分の既存ハイライトへ追加できます。URL投稿Skillの`--highlight`で投稿後の登録まで実行できます。追加要求はストーリー公開と同じモバイルAPIで送り、ハイライト内のメディアID一覧は読み取り専用の`GET /v1/highlights/:id/stories`で照会できます。登録の`failed`・`unknown`はトレイ照会で不在を確認した場合に限り、旧ジョブを`retryOf`に記録した新しい試行ジョブとして1回だけ再登録します。[API・再開と重複防止・検証範囲](docs/highlights.md)と[配布用Skill](skills/instagram-story-from-url/SKILL.md)を参照してください。
 
 ## MCP
 

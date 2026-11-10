@@ -7,6 +7,11 @@ export const highlightSchema = z.strictObject({
 	title: z.string().min(1).max(100),
 });
 export const addHighlightStorySchema = z.strictObject({ storyJobId: z.string().uuid() });
+export const highlightTraySchema = z.strictObject({
+	account: storyAccountSchema,
+	highlight: highlightSchema,
+	mediaIds: z.array(z.string().regex(/^\d+$/)),
+});
 export const highlightJobSchema = z.strictObject({
 	id: z.string().uuid(),
 	profile: z.string().min(1),
@@ -18,8 +23,10 @@ export const highlightJobSchema = z.strictObject({
 	state: z.enum(["queued", "applying", "completed", "failed", "unknown"]),
 	alreadyPresent: z.boolean().nullable(),
 	errorCode: z.string().nullable(),
+	retryOf: z.string().uuid().nullable().default(null),
 	createdAt: z.string().datetime(),
 	updatedAt: z.string().datetime(),
 });
 export type Highlight = z.infer<typeof highlightSchema>;
 export type HighlightJob = z.infer<typeof highlightJobSchema>;
+export type HighlightTray = z.infer<typeof highlightTraySchema>;

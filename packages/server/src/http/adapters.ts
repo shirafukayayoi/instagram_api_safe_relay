@@ -109,6 +109,10 @@ export const createHttpHighlights = async (
 			check();
 			return client.listHighlights(signal);
 		},
+		contents: async (highlight) => {
+			check();
+			return client.highlightItems(highlight.id, signal);
+		},
 		add: async (highlight, mediaId, account, beforeSave) => {
 			check();
 			const own = await client.listHighlights(signal);
@@ -126,7 +130,7 @@ export const createHttpHighlights = async (
 			await beforeSave();
 			check();
 			saveAttempted = true;
-			await client.addHighlightStory(highlight.id, mediaId, signal);
+			await client.addHighlightStory(highlight.id, mediaId, signal, highlight.title);
 			const after = await client.highlightItems(highlight.id, signal);
 			if (
 				!after.includes(mediaId) ||

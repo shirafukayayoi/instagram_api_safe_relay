@@ -106,7 +106,7 @@ describe("HTTP投稿アダプター", () => {
 		});
 		expect(await adapter.add(highlight, "999", account, save)).toBe(false);
 		expect(save).toHaveBeenCalledTimes(1);
-		expect(client.addHighlightStory).toHaveBeenCalledExactlyOnceWith("456", "999", expect.any(AbortSignal));
+		expect(client.addHighlightStory).toHaveBeenCalledExactlyOnceWith("456", "999", expect.any(AbortSignal), "保存先");
 	});
 	it("登録済みなら保存を省き、保存後に選択が欠けたら結果不明にする", async () => {
 		const client = fake();

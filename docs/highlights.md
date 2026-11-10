@@ -6,7 +6,8 @@
 
 1. `GET /v1/highlights`: 実ログインアカウントと既存ハイライトの`id`・`title`を返します。
 2. `POST /v1/highlights/:id/stories`: `Idempotency-Key`と`{"storyJobId":"<UUID>"}`を渡すと202と登録ジョブを返します。
-3. `GET /v1/highlight-jobs/:id`: 登録ジョブの状態を照会します。
+3. `GET /v1/highlights/:id/stories`: ハイライト内のメディアID一覧（`account`・`highlight`・`mediaIds`）を返す読み取り専用APIです。
+4. `GET /v1/highlight-jobs/:id`: 登録ジョブの状態を照会します。
 
 ```json
 {
@@ -22,9 +23,9 @@
 
 上記は応答の抜粋です。ジョブには`id`、`profile`、`storyJobId`、`account`、日時、`errorCode`も含まれます。登録済みのストーリーは`alreadyPresent: true`で完了し、保存操作を省きます。
 
-Relayのストーリー台帳で`published`、メディアID、アカウントを確認できた投稿だけを受け付けます。実アカウントと自分のハイライトを照合し、プロファイルの共通実行キューでWebの編集画面を操作します。サムネイルDOMの`ig_cache_key`からメディアIDを照合し、対象以外の選択を維持します。元の公開範囲を変更する操作は行いません。Cookieや認証値をNode.jsへ持ち出さず、任意URL・GraphQL・raw proxyを追加しません。
+Relayのストーリー台帳で`published`、メディアID、アカウントを確認できた投稿だけを受け付けます。実アカウントと自分のハイライトを照合します。HTTPモードの追加要求は、ストーリー公開と同じモバイルAPI（`i.instagram.com`の`highlights/highlight:<id>/edit_reel/`、`added_media_ids`はユーザーID接尾辞なしのメディアID配列、`signed_body`形式）で送ります。2026-11-11に、Webの`www.instagram.com/api/v1/highlights/.../edit_reel/`へのPOSTはjazoest等を添えてもボット判定でHTMLシェルを返され受理されないことを確認したため、Web POSTは使いません。ブラウザー方式はプロファイルの共通実行キューでWebの編集画面を操作し、サムネイルDOMの`ig_cache_key`からメディアIDを照合して対象以外の選択を維持します。元の公開範囲を変更する操作は行いません。Cookieや認証値をNode.jsへ持ち出さず、任意URL・GraphQL・raw proxyを追加しません。
 
-専用台帳は`stories.stateDir/highlights/`に保存され、既存の`story_data/`と同じくGit管理対象外です。保存直前の`applying`を永続化し、保存後に編集画面の選択済み一覧を開き直して確認します。保存後の失敗や再起動時の`applying`は`unknown`になり、同じキーや同じアカウント・ハイライト・メディアの再要求でも自動再登録しません。
+専用台帳は`stories.stateDir/highlights/`に保存され、既存の`story_data/`と同じくGit管理対象外です。保存直前の`applying`を永続化し、保存後にトレイ照会で対象と既存選択を確認します。保存後の失敗や再起動時の`applying`は`unknown`になります。同じキーの再要求は既存ジョブを返します。別のキーによる同じアカウント・ハイライト・メディアの再要求は、読み取り専用のトレイ照会で対象の不在を確認できた場合に限り、`retryOf`に旧ジョブを記録した新しい試行ジョブとして受け付けます。トレイ照会で対象が見つかれば既存ジョブを`completed / alreadyPresent: true`へ解決し、旧ジョブと照会結果は台帳に保持します。
 
 ## URL投稿Skill
 
@@ -44,4 +45,4 @@ Relayのストーリー台帳で`published`、メディアID、アカウント�
 pnpm --filter instagram-api-safe-relay exec node --import tsx/esm scripts/highlights-ui-smoke.ts
 ```
 
-このsmokeにはPlaywright Chromiumが必要です。外部ネットワークはモックし、実アカウントは使用しません。2026-10-08の実アカウントでは、登録済み動画の検出と再実行時の状態照会を検証しました。未登録の動画を新規保存するフローは、実アカウントでは未検証です。
+このsmokeにはPlaywright Chromiumが必要です。外部ネットワークはモックし、実アカウントは使用しません。2026-10-08の実アカウントでは、登録済み動画の検出と再実行時の状態照会を検証しました。未登録の動画を新規保存するフローは、実アカウントでは未検証です。2026-11-11に、HTTPモードでYouTube動画の2:50〜最後（43秒）の切り出し投稿をMusicハイライトへ登録し、トレイ照会で対象IDの追加と既存60件の維持を確認しました。投稿直後の登録はWeb POST遮断で失敗し、モバイルAPI移行後の時間を置いた再試行で成功しました。

@@ -230,9 +230,9 @@ def poll_job(args, directory, data):
 def register_highlight(args, directory, data):
     ledger = directory / "operation.json"
     target = data["highlightIntent"]
-    key = data["key"] + ":highlight"
+    base_key = data["key"] + ":highlight"
     if not data.get("highlightTarget"):
-        own = api("highlights", args.profile, key)["data"]
+        own = api("highlights", args.profile, base_key)["data"]
         if own["account"] != data["result"]["account"]:
             raise RuntimeError("ハイライトと公開済みストーリーのアカウントが一致しません")
         matches = [item for item in own["highlights"] if
@@ -242,12 +242,16 @@ def register_highlight(args, directory, data):
         data["highlightTarget"] = matches[0]
         save(ledger, data)
     if not data.get("highlightJob"):
-        result = api("highlights/" + data["highlightTarget"]["id"] + "/stories", args.profile, key,
+        result = api("highlights/" + data["highlightTarget"]["id"] + "/stories", args.profile, base_key,
                      {"storyJobId": data["job"]})["data"]
         data["highlightJob"] = str(uuid.UUID(result["id"]))
         save(ledger, data)
+    attempts = data.get("highlightAttempts", [])
+    def now():
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     deadline = time.monotonic() + 45
     while True:
+        key = base_key if not attempts else base_key + "-retry" + str(len(attempts))
         result = api("highlight-jobs/" + data["highlightJob"], args.profile, key)["data"]
         data["highlightResult"] = result
         save(ledger, data)
@@ -256,16 +260,37 @@ def register_highlight(args, directory, data):
                 or result.get("mediaId") != data["result"]["mediaId"]
                 or result.get("audience") != args.audience or result.get("profile") != args.profile):
             raise RuntimeError("ハイライト登録結果の対象照合ができません。再登録せずInstagram上で確認してください")
-        if result["state"] in {"completed", "failed", "unknown"}:
+        if result["state"] == "completed":
             print(json.dumps({"highlight": result}, ensure_ascii=False))
-            if result["state"] != "completed":
-                raise RuntimeError("ハイライト登録を確認できません。自動再登録はしません")
             return
+        if result["state"] in {"failed", "unknown"}:
+            # 読み取り専用の内容照会で自分で確認する。不在を確認できた場合に限り、
+            # 同じ操作ID・同じ登録先の新しい試行キーで再登録する。旧ジョブは保持する。
+            tray = api("highlights/" + data["highlightTarget"]["id"] + "/stories", args.profile, key)["data"]
+            present = (tray.get("account") == data["result"]["account"]
+                       and tray.get("highlight") == data["highlightTarget"]
+                       and data["result"]["mediaId"] in tray.get("mediaIds", []))
+            data["highlightVerified"] = {"checkedAt": now(), "present": present, "job": data["highlightJob"]}
+            save(ledger, data)
+            if present:
+                print(json.dumps({"highlight": result, "verified": "present"}, ensure_ascii=False))
+                return
+            if len(attempts) >= 3:
+                raise RuntimeError("ハイライト登録を確認できません。不在は確認済みですが再試行の上限に達しました")
+            attempts.append({"job": data["highlightJob"], "state": result["state"],
+                             "errorCode": result.get("errorCode"), "tray": {"present": present, "checkedAt": now()}})
+            data["highlightAttempts"] = attempts
+            retry_key = base_key + "-retry" + str(len(attempts))
+            result = api("highlights/" + data["highlightTarget"]["id"] + "/stories", args.profile, retry_key,
+                         {"storyJobId": data["job"]})["data"]
+            data["highlightJob"] = str(uuid.UUID(result["id"]))
+            save(ledger, data)
+            deadline = time.monotonic() + 45
+            continue
         if time.monotonic() >= deadline:
             print("ハイライト処理継続中です。同じ操作IDで状態確認を再開してください: " + data["highlightJob"])
             return
         time.sleep(2)
-
 
 if __name__ == "__main__":
     try:

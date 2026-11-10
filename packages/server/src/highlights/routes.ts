@@ -28,6 +28,15 @@ export const mountHighlightRoutes = (
 			return failure(c, error);
 		}
 	});
+	// 読み取り専用。ハイライト内のメディアID一覧を返し、unknownの有無確認に使う。
+	app.get("/v1/highlights/:id/stories", async (c) => {
+		try {
+			const name = profile(c);
+			return c.json({ data: await service?.stories(name, c.req.param("id")) });
+		} catch (error) {
+			return failure(c, error);
+		}
+	});
 	app.post("/v1/highlights/:id/stories", async (c) => {
 		try {
 			const name = profile(c);

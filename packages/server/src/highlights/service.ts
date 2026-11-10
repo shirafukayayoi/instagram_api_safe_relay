@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { addHighlightStorySchema, type HighlightJob } from "instagram-api-safe-contracts";
+import { addHighlightStorySchema, type HighlightJob, type HighlightTray } from "instagram-api-safe-contracts";
 import { mediaReady, withMediaSession } from "../media-session.js";
 import { StoryError } from "../stories/errors.js";
 import type { StoryService } from "../stories/service.js";
@@ -65,6 +65,14 @@ export class HighlightService {
 	list(name: string) {
 		return this.#browser(this.#profile(name), (browser) => browser.list());
 	}
+	async stories(name: string, highlightId: string): Promise<HighlightTray> {
+		const profile = this.#profile(name);
+		const own = await this.list(name);
+		const highlight = own.highlights.find((item) => item.id === highlightId);
+		if (!highlight) throw new StoryError("NOT_FOUND", "自分のハイライトが見つかりません");
+		const mediaIds = await this.#browser(profile, (browser) => browser.contents(highlight));
+		return { account: own.account, highlight, mediaIds };
+	}
 	create(name: string, highlightId: string, key: string | undefined, input: unknown): Promise<HighlightJob> {
 		return this.#intake.run(async () => {
 			const profile = this.#profile(name);
@@ -82,11 +90,36 @@ export class HighlightService {
 			const story = this.#options.stories.get(name, parsed.data.storyJobId);
 			if (story.state !== "published" || !story.mediaId || !story.account)
 				throw new StoryError("INVALID_INPUT", "公開完了を確認したストーリーだけ追加できます");
-			// 別のキーでも、同じ投稿と登録先を二重に処理しない。
-			const same = this.#options.store.forTarget(name, highlightId, story.mediaId);
+			const { mediaId } = story;
+			// 別のキーでも、同じ投稿と登録先を二重に処理しない。ただし画面で不在を
+			// 確認できたunknown・failedは、同じ登録の新しい試行として作り直せる。
+			const same = this.#options.store.forTarget(name, highlightId, mediaId);
+			let retryOf: string | null = null;
 			if (same) {
-				await this.#options.store.save({ ...same, aliases: [...same.aliases, { keyHash, requestHash }] });
-				return same.job;
+				if (same.job.state === "unknown" || same.job.state === "failed") {
+					const present = await this.#browser(profile, (browser) => browser.contents(same.job.highlight)).then((ids) =>
+						ids.includes(mediaId),
+					);
+					if (present) {
+						const resolved = {
+							...same,
+							aliases: [...same.aliases, { keyHash, requestHash }],
+							job: {
+								...same.job,
+								state: "completed" as const,
+								alreadyPresent: true,
+								errorCode: null,
+								updatedAt: new Date().toISOString(),
+							},
+						};
+						await this.#options.store.save(resolved);
+						return resolved.job;
+					}
+					retryOf = same.job.id;
+				} else {
+					await this.#options.store.save({ ...same, aliases: [...same.aliases, { keyHash, requestHash }] });
+					return same.job;
+				}
 			}
 			const own = await this.list(name);
 			if (own.account.id !== story.account.id || own.account.username !== story.account.username)
@@ -110,6 +143,7 @@ export class HighlightService {
 					state: "queued",
 					alreadyPresent: null,
 					errorCode: null,
+					retryOf,
 					createdAt: now,
 					updatedAt: now,
 				},
@@ -141,6 +175,13 @@ export class HighlightService {
 			);
 			await update({ state: "completed", alreadyPresent: present });
 		} catch (error) {
+			// 認証値を含まないエラー概要だけをログへ残し、結果不明の調査に使う。
+			console.error(
+				JSON.stringify({
+					highlightJob: record.job.id,
+					error: error instanceof Error ? error.message : String(error),
+				}),
+			);
 			const uncertain = record.job.state === "applying";
 			await update({
 				state: uncertain ? "unknown" : "failed",

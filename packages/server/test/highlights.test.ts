@@ -22,6 +22,7 @@ afterEach(async () => {
 const account = { id: "123", username: "owner" };
 const highlight = { id: "456", title: "idol" };
 const fixture = async (mode: "added" | "present" | "before-failure" | "after-failure" = "added") => {
+	const tray: string[] = [];
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), "instagram-highlight-"));
 	directories.push(directory);
 	const store = new HighlightStore(directory);
@@ -48,6 +49,7 @@ const fixture = async (mode: "added" | "present" | "before-failure" | "after-fai
 	};
 	const browser = {
 		list: vi.fn(async () => ({ account, highlights: [highlight] })),
+		contents: vi.fn(async () => [...tray]),
 		add: vi.fn(async (_highlight, _media, _account, beforeSave: () => Promise<void>) => {
 			if (mode === "present") return true;
 			if (mode === "before-failure") throw new StoryError("NOT_FOUND", "素材が見つかりません");
@@ -82,7 +84,7 @@ const fixture = async (mode: "added" | "present" | "before-failure" | "after-fai
 		await vi.waitFor(() => expect(["completed", "failed", "unknown"]).toContain(service.get("one", id).state));
 		return service.get("one", id);
 	};
-	return { directory, store, service, browser, profile, story, request, finish };
+	return { directory, store, service, browser, profile, story, request, finish, tray };
 };
 
 describe("ハイライト登録", () => {
@@ -162,6 +164,37 @@ describe("ハイライト登録", () => {
 		await f.service.create("one", "456", "first", f.request);
 		expect(f.browser.add).toHaveBeenCalledTimes(1);
 	});
+	it("unknownの登録は画面で不在を確認してから新しい試行を作り、旧ジョブを保持する", async () => {
+		const f = await fixture("after-failure");
+		const first = await f.service.create("one", "456", "first", f.request);
+		expect((await f.finish(first.id)).state).toBe("unknown");
+		const retry = await f.service.create("one", "456", "second", f.request);
+		expect(retry.id).not.toBe(first.id);
+		expect(retry.retryOf).toBe(first.id);
+		expect(f.store.get(first.id)?.job).toMatchObject({ state: "unknown", errorCode: "PUBLICATION_UNKNOWN" });
+		expect(f.browser.contents).toHaveBeenCalledWith(highlight);
+		expect(await f.finish(retry.id)).toMatchObject({ state: "unknown", retryOf: first.id });
+	});
+	it("unknownの登録が画面で登録済みならcompletedへ解決する", async () => {
+		const f = await fixture("after-failure");
+		const first = await f.service.create("one", "456", "first", f.request);
+		await f.finish(first.id);
+		f.tray.push("999");
+		const again = await f.service.create("one", "456", "second", f.request);
+		expect(again.id).toBe(first.id);
+		expect(again).toMatchObject({ state: "completed", alreadyPresent: true });
+		expect(f.browser.add).toHaveBeenCalledTimes(1);
+	});
+	it("読み取り専用のハイライト内容照会を返す", async () => {
+		const f = await fixture();
+		f.tray.push("999", "888");
+		expect(await f.service.stories("one", "456")).toEqual({
+			account,
+			highlight,
+			mediaIds: ["999", "888"],
+		});
+		await expect(f.service.stories("one", "789")).rejects.toMatchObject({ code: "NOT_FOUND" });
+	});
 	it("再起動後のapplyingはunknownにし、台帳の排他とプロフィール分離を維持する", async () => {
 		const f = await fixture("after-failure");
 		const job = await f.service.create("one", "456", "first", f.request);
@@ -191,6 +224,9 @@ describe("ハイライト登録", () => {
 		};
 		expect((await app.request("/v1/highlights", { headers: { host: "localhost" } })).status).toBe(401);
 		expect((await app.request("/v1/highlights", { headers })).status).toBe(200);
+		const tray = await app.request("/v1/highlights/456/stories", { headers });
+		expect(tray.status).toBe(200);
+		expect((await tray.json()).data).toMatchObject({ account, highlight, mediaIds: [] });
 		expect((await app.request("/v1/highlights/456/stories", { method: "POST", headers, body: "{}" })).status).toBe(400);
 		const response = await app.request("/v1/highlights/456/stories", {
 			method: "POST",
