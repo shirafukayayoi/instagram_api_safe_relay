@@ -160,7 +160,7 @@ def run(args, directory):
             subprocess.run([sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-playlist",
                             "--js-runtimes", "node",
                             "--max-filesize", "300M", "--merge-output-format", "mp4",
-                            "-f", "b[ext=mp4][vcodec~='^(avc1|h264)'][acodec~='^(mp4a|aac)']/bv[ext=mp4][height<=1080][vcodec~='^(avc1|h264)']+ba[ext=m4a][acodec~='^(mp4a|aac)']/b[ext=mp4][vcodec~='^(avc1|h264)'][acodec=none]",
+                            "-f", "bv[ext=mp4][height<=1080][vcodec~='^(avc1|h264)']+ba[ext=m4a][acodec~='^(mp4a|aac)']/b[ext=mp4][vcodec~='^(avc1|h264)'][acodec~='^(mp4a|aac)']/b[ext=mp4][vcodec~='^(avc1|h264)'][acodec=none]",
                             "-o", str(source), "--", args.url], check=True)
             data["sourceDownloaded"] = True
             save(ledger, data)
