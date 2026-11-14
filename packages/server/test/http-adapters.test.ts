@@ -111,13 +111,35 @@ describe("HTTP投稿アダプター", () => {
 	it("登録済みなら保存を省き、保存後に選択が欠けたら結果不明にする", async () => {
 		const client = fake();
 		client.highlightItems.mockResolvedValueOnce(["999"]);
-		const adapter = await createHttpHighlights(client as unknown as InstagramHttpClient, signal());
+		const adapter = await createHttpHighlights(client as unknown as InstagramHttpClient, signal(), async () => {});
 		const save = vi.fn();
 		expect(await adapter.add(highlight, "999", account, save)).toBe(true);
 		expect(save).not.toHaveBeenCalled();
 		expect(client.addHighlightStory).not.toHaveBeenCalled();
 		client.highlightItems.mockResolvedValueOnce(["100"]).mockResolvedValueOnce(["999"]);
 		await expect(adapter.add(highlight, "999", account, save)).rejects.toMatchObject({ code: "PUBLICATION_UNKNOWN" });
+	});
+	it("反映遅延時は読み取りだけを再試行し、保存要求を再送しない", async () => {
+		const client = fake();
+		client.highlightItems.mockResolvedValueOnce(["100"]).mockResolvedValueOnce(["100"]).mockResolvedValueOnce(["100", "999"]);
+		const wait = vi.fn(async () => {});
+		const adapter = await createHttpHighlights(client as unknown as InstagramHttpClient, signal(), wait);
+		expect(await adapter.add(highlight, "999", account, vi.fn(async () => {}))).toBe(false);
+		expect(client.addHighlightStory).toHaveBeenCalledTimes(1);
+		expect(client.highlightItems).toHaveBeenCalledTimes(3);
+		expect(wait).toHaveBeenCalledTimes(1);
+	});
+	it("既存項目が欠けたままなら詳細を残して結果不明とし、保存を再送しない", async () => {
+		const client = fake();
+		client.highlightItems.mockResolvedValueOnce(["100"]).mockResolvedValue(["999"]);
+		const wait = vi.fn(async () => {});
+		const adapter = await createHttpHighlights(client as unknown as InstagramHttpClient, signal(), wait);
+		await expect(adapter.add(highlight, "999", account, vi.fn(async () => {}))).rejects.toThrow(
+			"targetPresent=true, missingCount=1, expectedCount=2, actualCount=1",
+		);
+		expect(client.addHighlightStory).toHaveBeenCalledTimes(1);
+		expect(client.highlightItems).toHaveBeenCalledTimes(4);
+		expect(wait).toHaveBeenCalledTimes(2);
 	});
 	it("HTTPモードはブラウザー設定なしで使え、DMの誤用を拒否する", () => {
 		const profiles = [{ name: "http", browser: { type: "http", sessionFile: "/private/session.json" } }];

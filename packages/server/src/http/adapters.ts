@@ -98,6 +98,7 @@ export const createHttpStoryPublisher = async (
 export const createHttpHighlights = async (
 	client: InstagramHttpClient,
 	signal: AbortSignal,
+	waitForVisibility: () => Promise<void> = () => delay(2000, undefined, { signal }),
 ): Promise<HighlightBrowser> => {
 	let closed = false;
 	let saveAttempted = false;
@@ -131,14 +132,19 @@ export const createHttpHighlights = async (
 			check();
 			saveAttempted = true;
 			await client.addHighlightStory(highlight.id, mediaId, signal, highlight.title);
-			const after = await client.highlightItems(highlight.id, signal);
-			if (
-				!after.includes(mediaId) ||
-				!before.every((id) => after.includes(id)) ||
-				after.length !== new Set([...before, mediaId]).size
-			)
-				throw new StoryError("PUBLICATION_UNKNOWN", "登録後の選択を確認できません。再登録しません");
-			return false;
+			// 保存要求は再送せず、反映遅延に備えて読み取りだけを最大3回行う。
+			let details = "";
+			for (let attempt = 0; attempt < 3; attempt++) {
+				if (attempt > 0) await waitForVisibility();
+				check();
+				const after = await client.highlightItems(highlight.id, signal);
+				const targetPresent = after.includes(mediaId);
+				const missingCount = before.filter((id) => !after.includes(id)).length;
+				const expectedCount = new Set([...before, mediaId]).size;
+				if (targetPresent && missingCount === 0 && after.length === expectedCount) return false;
+				details = `targetPresent=${targetPresent}, missingCount=${missingCount}, expectedCount=${expectedCount}, actualCount=${after.length}`;
+			}
+			throw new StoryError("PUBLICATION_UNKNOWN", `登録後の選択を確認できません。再登録しません (${details})`);
 		},
 		close: async () => {
 			closed = true;
